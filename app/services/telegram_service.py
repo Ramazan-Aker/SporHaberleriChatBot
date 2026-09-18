@@ -11,6 +11,8 @@ from app.integrations.telegram.telegram_bot import (
     approval_keyboard,
     build_application,
     notification_text,
+    x_share_keyboard,
+    x_share_text,
 )
 from app.models.article import ArticleStatus
 from app.models.generated_post import GeneratedPost, PostStatus
@@ -135,21 +137,27 @@ class TelegramService:
     async def _show_post(self, update: Update, post_id: int) -> None:
         query = update.callback_query
         async with self.session_factory() as session:
-            post = await PostRepository(session).get(post_id)
+            post = await PostRepository(session).get(post_id, with_article=True)
             if query and query.message:
                 if post is None:
                     await query.message.reply_text("Gönderi bulunamadı.")
                 else:
-                    await query.message.reply_text(post.final_text or post.text)
+                    await query.message.reply_text(
+                        x_share_text(post) + "\n" + post.article.url,
+                        reply_markup=x_share_keyboard(post),
+                        disable_web_page_preview=True,
+                    )
 
     async def _approve(self, update: Update, post_id: int) -> None:
         query = update.callback_query
         async with self.session_factory() as session:
             post = await PostRepository(session).get(post_id, with_article=True)
+            reply_markup = None
             if post is None:
                 message = "Gönderi bulunamadı."
             elif post.status == PostStatus.APPROVED:
                 message = "Bu gönderi zaten onaylandı."
+                reply_markup = x_share_keyboard(post)
             elif post.status == PostStatus.REJECTED:
                 message = "Bu gönderi daha önce reddedildi."
             else:
@@ -168,9 +176,10 @@ class TelegramService:
                 post.approved_at = now
                 post.article.status = ArticleStatus.APPROVED
                 await session.commit()
-                message = "✅ Gönderi onaylandı."
+                message = "✅ Gönderi onaylandı. X paylaşım ekranını açabilirsiniz."
+                reply_markup = x_share_keyboard(post)
             if query and query.message:
-                await query.message.reply_text(message)
+                await query.message.reply_text(message, reply_markup=reply_markup)
 
     async def _reject(self, update: Update, post_id: int) -> None:
         query = update.callback_query

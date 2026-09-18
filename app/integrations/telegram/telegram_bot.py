@@ -1,9 +1,13 @@
 from html import escape
+from urllib.parse import urlencode
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ApplicationBuilder
 
 from app.models.generated_post import GeneratedPost
+
+X_POST_MAX_LENGTH = 280
+X_URL_LENGTH = 23
 
 
 def build_application(token: str) -> Application:
@@ -27,6 +31,34 @@ def approval_keyboard(post_id: int, *, edited: bool = False) -> InlineKeyboardMa
             ]
         )
     return InlineKeyboardMarkup(rows)
+
+
+def _truncate_text(text: str, max_length: int) -> str:
+    if len(text) <= max_length:
+        return text
+    shortened = text[: max_length - 1].rsplit(" ", maxsplit=1)[0].rstrip()
+    return (shortened or text[: max_length - 1]).rstrip() + "…"
+
+
+def x_share_text(post: GeneratedPost) -> str:
+    source_name = _truncate_text(post.article.source.name, 40)
+    attribution = f"\n\nKaynak: {source_name}"
+    # X wraps every HTTP(S) link to a fixed-length t.co URL. Leave one character
+    # for the space before the separately supplied news URL.
+    available = X_POST_MAX_LENGTH - X_URL_LENGTH - 1 - len(attribution)
+    post_text = _truncate_text(post.final_text or post.text, available)
+    return post_text + attribution
+
+
+def x_share_url(post: GeneratedPost) -> str:
+    query = urlencode({"text": x_share_text(post), "url": post.article.url})
+    return f"https://twitter.com/intent/tweet?{query}"
+
+
+def x_share_keyboard(post: GeneratedPost) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("𝕏'te Paylaş", url=x_share_url(post))]]
+    )
 
 
 def notification_text(post: GeneratedPost) -> str:

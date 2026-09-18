@@ -123,8 +123,11 @@ alanlarını alır ve sonuç 260 karakter sınırından ayrıca uygulama tarafı
 
 Bot hem kullanıcı hem chat kimliğini kontrol eder. Yeni haberde **Onayla**,
 **Reddet**, **Düzenle** ve **Metni Göster** düğmeleri gelir. Düzenleme sonrasında
-yeni metin veritabanına `final_text` olarak kaydedilir. Long polling kullanıldığı
-için webhook veya public Telegram endpoint'i gerekmez.
+yeni metin veritabanına `final_text` olarak kaydedilir. Onaylanan gönderideki
+**X'te Paylaş** düğmesi, metni, kaynak adını ve haber URL'sini X Web Intent ile
+hazır paylaşım ekranında açar; son gönderim kullanıcıya aittir ve X API anahtarı
+gerekmez. Long polling kullanıldığı için webhook veya public Telegram endpoint'i
+gerekmez.
 
 ## RSS kaynağı ekleme
 

@@ -1,10 +1,15 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.integrations.telegram.telegram_bot import approval_keyboard
+from app.integrations.telegram.telegram_bot import (
+    approval_keyboard,
+    x_share_text,
+    x_share_url,
+)
 from app.models.article import ArticleStatus
 from app.models.generated_post import PostCategory, PostStatus
 from app.repositories.article_repository import ArticleRepository
@@ -21,6 +26,24 @@ def test_keyboard_contains_expected_actions() -> None:
         button.callback_data for row in keyboard.inline_keyboard for button in row
     ]
     assert callbacks == ["approve:42", "reject:42", "edit:42", "show:42"]
+
+
+def test_x_share_url_contains_post_source_and_article_url() -> None:
+    post = SimpleNamespace(
+        text="Bandırmaspor ile Ümraniyespor saat 17.45'te karşılaşacak. ⚽",
+        final_text=None,
+        article=SimpleNamespace(
+            url="https://example.com/mac",
+            source=SimpleNamespace(name="A Spor"),
+        ),
+    )
+
+    share_url = x_share_url(post)
+    query = parse_qs(urlparse(share_url).query)
+
+    assert query["url"] == ["https://example.com/mac"]
+    assert "Kaynak: A Spor" in query["text"][0]
+    assert len(x_share_text(post)) + 1 + 23 <= 280
 
 
 def test_telegram_authorization_requires_user_and_chat(
@@ -96,6 +119,11 @@ async def test_approve_flow_updates_database(
         callback_query=SimpleNamespace(message=SimpleNamespace(reply_text=reply_text))
     )
     await service._approve(update, post_id)
+
+    reply_markup = reply_text.await_args.kwargs["reply_markup"]
+    share_button = reply_markup.inline_keyboard[0][0]
+    assert share_button.text == "𝕏'te Paylaş"
+    assert share_button.url.startswith("https://twitter.com/intent/tweet?")
 
     async with session_factory() as session:
         loaded = await PostRepository(session).get(post_id, with_article=True)
