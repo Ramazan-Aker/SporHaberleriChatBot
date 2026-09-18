@@ -1,4 +1,5 @@
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -39,7 +40,10 @@ Aynı açılışları, cümle kalıplarını ve 'dikkat çeken gelişme', 'detay
 netleşmedi' gibi dolgu ifadelerini tekrarlama. Haber özeti, bağlam ve soru için
 'Haber:', 'Yorum:' veya 'Soru:' başlıkları kullanma. Sahte kişisel deneyim veya
 'bence' ile başlayan kişisel görüş üretme. Gerekiyorsa 1-2 uygun emoji kullan;
-emoji ve hashtag kullanımını zorlama.
+emoji kullanımını zorlama. Metnin sonuna haberin ana konusunu belirten bir hashtag
+ekle. Yalnızca iki konu da açıkça önemliyse ikinci bir hashtag kullan. Kulüp, milli
+takım veya organizasyon adı gibi doğrudan ilgili ve doğal etiketleri seç; ilgisiz
+gündem etiketleri, genel hashtag yığınları ve ikiden fazla hashtag kullanma.
 Kaynak adı ve URL paylaşım sırasında ayrıca ekleneceği için post metnine ekleme.
 Mümkünse 200 karakter içinde kal ve verilen karakter sınırını kesinlikle aşma.
 Kategori değeri izin verilen kategorilerden biri, confidence ise 0-1 arasında olsun.
@@ -76,6 +80,7 @@ MATCH_FINAL_CLAIM_TERMS = MATCH_FINAL_EVIDENCE_TERMS + (
     "finali tamamladı",
     "galip ayrıldı",
 )
+HASHTAG_PATTERN = re.compile(r"(?<!\w)#\w+")
 
 
 @dataclass(slots=True)
@@ -150,6 +155,8 @@ class ContentGenerator:
             raise ValueError("AI classified an unfinished match update as a result")
         if claims_final_result and not has_final_result_evidence:
             raise ValueError("AI added an unsupported final match result")
+        if len(HASHTAG_PATTERN.findall(result.post_text)) > 2:
+            raise ValueError("AI added more than two hashtags")
 
     async def generate(self, data: ContentInput) -> GeneratedPostContent:
         user_prompt = (

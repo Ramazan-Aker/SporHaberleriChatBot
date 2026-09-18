@@ -122,3 +122,38 @@ async def test_content_generator_retries_premature_match_result_claim() -> None:
     assert result.category == PostCategory.GENERAL
     assert "skor" in result.post_text
     assert ai.calls == 2
+
+
+class ExcessiveHashtagAI:
+    model = "mock-model"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, *, system_prompt: str, user_prompt: str):
+        self.calls += 1
+        hashtags = "#Futbol #Spor #Gundem" if self.calls == 1 else "#SuperLig"
+        return GeneratedPostContent(
+            post_text=f"Takım yeni sezon hazırlıklarına başladı. {hashtags}",
+            category=PostCategory.GENERAL,
+            confidence=0.8,
+        )
+
+
+async def test_content_generator_retries_more_than_two_hashtags() -> None:
+    ai = ExcessiveHashtagAI()
+    generator = ContentGenerator(ai, max_length=100, max_attempts=2)
+
+    result = await generator.generate(
+        ContentInput(
+            title="Takım yeni sezon hazırlıklarına başladı",
+            description="Takım ilk antrenmanını bugün gerçekleştirdi.",
+            source_name="Spor Kaynağı",
+            url="https://example.com/training",
+            published_at=None,
+            credibility_score=7,
+        )
+    )
+
+    assert result.post_text.endswith("#SuperLig")
+    assert ai.calls == 2
