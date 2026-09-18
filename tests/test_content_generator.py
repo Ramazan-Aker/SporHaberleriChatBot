@@ -81,3 +81,44 @@ async def test_content_generator_retries_unsupported_transfer_claim() -> None:
     assert result.category == PostCategory.GENERAL
     assert "milli takım" in result.post_text
     assert ai.calls == 2
+
+
+class PrematureMatchResultAI:
+    model = "mock-model"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, *, system_prompt: str, user_prompt: str):
+        self.calls += 1
+        if self.calls == 1:
+            return GeneratedPostContent(
+                post_text="Orduspor 1967, rakibini 8-0 yenerek galibiyet elde etti.",
+                category=PostCategory.MATCH_RESULT,
+                confidence=0.9,
+            )
+        return GeneratedPostContent(
+            post_text="60. dakikada gelen golle skor Orduspor 1967 lehine 8-0 oldu.",
+            category=PostCategory.GENERAL,
+            confidence=0.8,
+        )
+
+
+async def test_content_generator_retries_premature_match_result_claim() -> None:
+    ai = PrematureMatchResultAI()
+    generator = ContentGenerator(ai, max_length=100, max_attempts=2)
+
+    result = await generator.generate(
+        ContentInput(
+            title="GOL | Orduspor 1967 8-0 Torul Belediye Spor",
+            description="60. dakikada Atakan Aybastı topu ağlara gönderdi.",
+            source_name="A Spor",
+            url="https://example.com/live-goal",
+            published_at=None,
+            credibility_score=7,
+        )
+    )
+
+    assert result.category == PostCategory.GENERAL
+    assert "skor" in result.post_text
+    assert ai.calls == 2

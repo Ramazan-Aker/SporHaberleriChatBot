@@ -26,6 +26,10 @@ bahsetmiyorsa kategori 'transfer' olamaz; 'transfer tamamlandı', 'imza attı',
 Kaynakta yalnız iddia, beklenti, haber veya belirsizlik varsa bunu kesin olay gibi
 yazma. Açıklama yetersizse yalnız doğrulanabilen başlık bilgisini temkinli aktar ve
 confidence değerini düşür.
+Bir skorun yazılması maçın bittiğini göstermez. Kaynak açıkça 'maç sonucu',
+'sona erdi', 'son düdük', 'kazandı' veya eşdeğer bir bitiş bilgisi vermiyorsa
+'yendi', 'galibiyet elde etti' ya da 'maç sonucu' yazma. GOL, canlı anlatım,
+devre arası ve dakika güncellemelerini kesin maç sonucu olarak sunma.
 Kısa, doğal ve özgün bir X gönderisi yaz. Gerekiyorsa 1-2 uygun emoji kullan.
 Kaynak URL'sini post metnine ekleme. Verilen karakter sınırını aşma.
 Kategori değeri izin verilen kategorilerden biri, confidence ise 0-1 arasında olsun.
@@ -46,6 +50,21 @@ TRANSFER_COMPLETION_PHRASES = (
     "resmen transfer",
     "kadrosuna kattı",
     "imza attı",
+)
+MATCH_FINAL_EVIDENCE_TERMS = (
+    "maç sonucu",
+    "karşılaşma sona erdi",
+    "mücadele sona erdi",
+    "maç sona erdi",
+    "son düdük",
+    "maçı kazandı",
+    "galibiyet elde etti",
+    "mağlup etti",
+    " yendi",
+)
+MATCH_FINAL_CLAIM_TERMS = MATCH_FINAL_EVIDENCE_TERMS + (
+    "finali tamamladı",
+    "galip ayrıldı",
 )
 
 
@@ -108,6 +127,19 @@ class ContentGenerator:
             raise ValueError("AI classified a non-transfer source as a transfer")
         if claims_completed_transfer and not has_transfer_context:
             raise ValueError("AI added an unsupported completed transfer claim")
+        has_final_result_evidence = any(
+            term in source_text for term in MATCH_FINAL_EVIDENCE_TERMS
+        )
+        claims_final_result = any(
+            term in output_text for term in MATCH_FINAL_CLAIM_TERMS
+        )
+        if (
+            result.category == PostCategory.MATCH_RESULT
+            and not has_final_result_evidence
+        ):
+            raise ValueError("AI classified an unfinished match update as a result")
+        if claims_final_result and not has_final_result_evidence:
+            raise ValueError("AI added an unsupported final match result")
 
     async def generate(self, data: ContentInput) -> GeneratedPostContent:
         user_prompt = (

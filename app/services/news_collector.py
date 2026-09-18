@@ -13,7 +13,7 @@ from app.repositories.source_repository import SourceRepository
 from app.services.content_generator import ContentGenerator, ContentInput
 from app.services.credibility_service import CredibilityService
 from app.services.duplicate_detector import DuplicateDetector, make_content_hash
-from app.services.quality_service import is_quality_article
+from app.services.quality_service import is_live_match_update, is_quality_article
 
 logger = structlog.get_logger(__name__)
 
@@ -87,7 +87,13 @@ class NewsCollector:
                     ),
                 )
                 for article in articles
+                if not is_live_match_update(article.title)
             ]
+            for article in articles:
+                if is_live_match_update(article.title):
+                    article.status = ArticleStatus.DISCOVERED
+                    article.last_error = None
+            await session.commit()
 
         for article_id, source_id, content_input in retry_items:
             try:
@@ -154,6 +160,13 @@ class NewsCollector:
         first_scan: bool,
         entry: FeedEntry,
     ) -> None:
+        if is_live_match_update(entry.title):
+            logger.info(
+                "article_skipped_live_match_update",
+                source=source_id,
+                operation="live_update_filter",
+            )
+            return
         if not is_quality_article(
             title=entry.title, description=entry.description, url=entry.url
         ):

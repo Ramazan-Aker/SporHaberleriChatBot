@@ -116,6 +116,33 @@ async def test_first_scan_stores_all_but_generates_only_recent(
 
 
 @pytest.mark.asyncio
+async def test_live_goal_update_is_not_sent_to_ai(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await add_source(session_factory)
+    entry = FeedEntry(
+        "GOL | Orduspor 1967 8-0 Torul Belediye Spor",
+        "60. dakikada Atakan Aybastı'nın golü geldi.",
+        "https://example.com/live-goal",
+        datetime.now(UTC),
+    )
+    generator = FakeGenerator()
+    collector = NewsCollector(
+        session_factory=session_factory,
+        rss_client=FakeRSSClient([entry]),
+        content_generator=generator,
+        notifier=None,
+    )
+
+    await collector.fetch_news()
+
+    async with session_factory() as session:
+        article_count = await session.scalar(select(func.count(Article.id)))
+    assert generator.calls == 0
+    assert article_count == 0
+
+
+@pytest.mark.asyncio
 async def test_failed_ai_marks_article_without_losing_it(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
