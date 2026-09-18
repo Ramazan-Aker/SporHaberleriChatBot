@@ -32,3 +32,52 @@ async def test_content_generator_retries_invalid_length() -> None:
     )
     assert result.post_text == "Geçerli kısa gönderi"
     assert ai.calls == 2
+
+
+class MisreadingTransferAI:
+    model = "mock-model"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, *, system_prompt: str, user_prompt: str):
+        self.calls += 1
+        if self.calls == 1:
+            return GeneratedPostContent(
+                post_text=(
+                    "Nijerya ile anlaşmaya varıldı: Osimhen'in Galatasaray'a "
+                    "transferi tamamlandı."
+                ),
+                category=PostCategory.TRANSFER,
+                confidence=0.9,
+            )
+        return GeneratedPostContent(
+            post_text=(
+                "Nijerya, sakatlığı süren Osimhen'i milli takım kadrosuna çağırdı."
+            ),
+            category=PostCategory.GENERAL,
+            confidence=0.85,
+        )
+
+
+async def test_content_generator_retries_unsupported_transfer_claim() -> None:
+    ai = MisreadingTransferAI()
+    generator = ContentGenerator(ai, max_length=100, max_attempts=2)
+
+    result = await generator.generate(
+        ContentInput(
+            title="Nijerya'dan Galatasaray'a Victor Osimhen şoku",
+            description=(
+                "Osimhen'in milli takım kampına katılmaması konusunda federasyonla "
+                "anlaşıldığı haberlerinin ardından oyuncu kadroya çağrıldı."
+            ),
+            source_name="A Spor",
+            url="https://example.com/osimhen",
+            published_at=None,
+            credibility_score=7,
+        )
+    )
+
+    assert result.category == PostCategory.GENERAL
+    assert "milli takım" in result.post_text
+    assert ai.calls == 2

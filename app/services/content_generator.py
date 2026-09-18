@@ -7,6 +7,7 @@ from typing import Protocol
 import structlog
 from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
 
+from app.models.generated_post import PostCategory
 from app.schemas.generated_post import GeneratedPostContent, GeneratedPostValidation
 
 logger = structlog.get_logger(__name__)
@@ -16,10 +17,36 @@ Yalnızca kullanıcı mesajında verilen haber kaynağındaki bilgileri kullan.
 Bilgi uydurma, haberi kopyalama, yanıltıcı veya abartılı clickbait kullanma.
 Transfer iddialarını kesinleşmiş gibi yazma; 'iddia ediliyor', 'bildiriliyor'
 veya 'görüşmeler sürüyor' gibi kaynaktaki belirsizliği koruyan ifadeler kullan.
+Başlıktaki kelimelerden olayın bağlamını tahmin etme. Kim, kiminle, hangi konuda
+anlaştı bilgisini açıklamadan aynen doğrula. Bir kulübün oyuncuyu milli takıma
+göndermemek için federasyonla anlaşması, transfer anlaşması değildir.
+Kaynak açıkça transfer, bonservis, kulüpler arası geçiş veya imza sürecinden
+bahsetmiyorsa kategori 'transfer' olamaz; 'transfer tamamlandı', 'imza attı',
+'kadrosuna kattı' veya benzeri kesin ifadeler kullanma.
+Kaynakta yalnız iddia, beklenti, haber veya belirsizlik varsa bunu kesin olay gibi
+yazma. Açıklama yetersizse yalnız doğrulanabilen başlık bilgisini temkinli aktar ve
+confidence değerini düşür.
 Kısa, doğal ve özgün bir X gönderisi yaz. Gerekiyorsa 1-2 uygun emoji kullan.
 Kaynak URL'sini post metnine ekleme. Verilen karakter sınırını aşma.
 Kategori değeri izin verilen kategorilerden biri, confidence ise 0-1 arasında olsun.
 """
+
+TRANSFER_CONTEXT_TERMS = (
+    "transfer",
+    "bonservis",
+    "kiralık",
+    "kulübüne kat",
+    "kadrosuna kat",
+    "sözleşme imza",
+    "transfer görüşme",
+)
+TRANSFER_COMPLETION_PHRASES = (
+    "transferi tamamlandı",
+    "transfer tamamlandı",
+    "resmen transfer",
+    "kadrosuna kattı",
+    "imza attı",
+)
 
 
 @dataclass(slots=True)
@@ -65,6 +92,23 @@ class ContentGenerator:
                     await asyncio.sleep(delay)
             self._last_request_at = time.monotonic()
 
+    @staticmethod
+    def _validate_source_grounding(
+        result: GeneratedPostContent, data: ContentInput
+    ) -> None:
+        source_text = f"{data.title} {data.description or ''}".casefold()
+        output_text = result.post_text.casefold()
+        has_transfer_context = any(
+            term in source_text for term in TRANSFER_CONTEXT_TERMS
+        )
+        claims_completed_transfer = any(
+            phrase in output_text for phrase in TRANSFER_COMPLETION_PHRASES
+        )
+        if result.category == PostCategory.TRANSFER and not has_transfer_context:
+            raise ValueError("AI classified a non-transfer source as a transfer")
+        if claims_completed_transfer and not has_transfer_context:
+            raise ValueError("AI added an unsupported completed transfer claim")
+
     async def generate(self, data: ContentInput) -> GeneratedPostContent:
         user_prompt = (
             f"Baslik: {data.title}\n"
@@ -89,5 +133,6 @@ class ContentGenerator:
                     text=result.post_text, max_length=self.max_length
                 )
                 result.post_text = validated.text
+                self._validate_source_grounding(result, data)
                 return result
         raise RuntimeError("Content generation retry loop ended unexpectedly")
