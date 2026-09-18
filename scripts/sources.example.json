@@ -1,0 +1,12 @@
+[
+  {
+    "name": "Gerçek kaynak adını yazın",
+    "url": "https://example.com",
+    "rss_url": "https://example.com/real-feed-url.xml",
+    "category": "football",
+    "source_type": "news",
+    "credibility_score": 7,
+    "active": false
+  }
+]
+
