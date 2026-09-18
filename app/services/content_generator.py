@@ -30,8 +30,18 @@ Bir skorun yazılması maçın bittiğini göstermez. Kaynak açıkça 'maç son
 'sona erdi', 'son düdük', 'kazandı' veya eşdeğer bir bitiş bilgisi vermiyorsa
 'yendi', 'galibiyet elde etti' ya da 'maç sonucu' yazma. GOL, canlı anlatım,
 devre arası ve dakika güncellemelerini kesin maç sonucu olarak sunma.
-Kısa, doğal ve özgün bir X gönderisi yaz. Gerekiyorsa 1-2 uygun emoji kullan.
-Kaynak URL'sini post metnine ekleme. Verilen karakter sınırını aşma.
+Metni X'te doğrudan paylaşılabilecek, doğal bir Türkçe spor editörü üslubuyla yaz.
+İlk cümlede haberin doğrulanabilen ana gelişmesini açıkça ver. Haber yeterli ayrıntı
+sunuyorsa ikinci cümlede gelişmenin önemini veya bağlamını yalnızca kaynakta bulunan
+bilgilere dayanarak kısaca açıkla. Habere gerçekten uyuyorsa sonda tek bir doğal
+tartışma sorusu kullanılabilir; her habere zorla soru ekleme.
+Aynı açılışları, cümle kalıplarını ve 'dikkat çeken gelişme', 'detaylar henüz
+netleşmedi' gibi dolgu ifadelerini tekrarlama. Haber özeti, bağlam ve soru için
+'Haber:', 'Yorum:' veya 'Soru:' başlıkları kullanma. Sahte kişisel deneyim veya
+'bence' ile başlayan kişisel görüş üretme. Gerekiyorsa 1-2 uygun emoji kullan;
+emoji ve hashtag kullanımını zorlama.
+Kaynak adı ve URL paylaşım sırasında ayrıca ekleneceği için post metnine ekleme.
+Mümkünse 200 karakter içinde kal ve verilen karakter sınırını kesinlikle aşma.
 Kategori değeri izin verilen kategorilerden biri, confidence ise 0-1 arasında olsun.
 """
 
