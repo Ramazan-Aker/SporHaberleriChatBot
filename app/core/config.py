@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,8 +12,11 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/sports"
+    ai_provider: Literal["openai", "groq"] = "openai"
     openai_api_key: str | None = None
     openai_model: str | None = None
+    groq_api_key: str | None = None
+    groq_model: str = "openai/gpt-oss-20b"
     telegram_bot_token: str | None = None
     telegram_chat_id: int | None = None
     telegram_allowed_user_id: int | None = None
@@ -32,10 +36,21 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_integrations(self) -> "Settings":
-        if self.scheduler_enabled and not (self.openai_api_key and self.openai_model):
-            raise ValueError(
-                "OPENAI_API_KEY and OPENAI_MODEL are required when scheduler is enabled"
-            )
+        if self.scheduler_enabled:
+            if self.ai_provider == "openai" and not (
+                self.openai_api_key and self.openai_model
+            ):
+                raise ValueError(
+                    "OPENAI_API_KEY and OPENAI_MODEL are required when "
+                    "AI_PROVIDER=openai and scheduler is enabled"
+                )
+            if self.ai_provider == "groq" and not (
+                self.groq_api_key and self.groq_model
+            ):
+                raise ValueError(
+                    "GROQ_API_KEY and GROQ_MODEL are required when "
+                    "AI_PROVIDER=groq and scheduler is enabled"
+                )
         if self.telegram_enabled and not all(
             (
                 self.telegram_bot_token,

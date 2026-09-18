@@ -4,10 +4,12 @@ from app.core.logging import redact_secrets, safe_error
 def test_redact_secrets_removes_credentials_from_log_text() -> None:
     telegram_token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
     openai_key = "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"
+    groq_key = "gsk_ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"
     database_password = "super-secret-password"
     message = (
         f"POST https://api.telegram.org/bot{telegram_token}/getUpdates "
         f"Authorization: Bearer {openai_key} "
+        f"Groq-Key: {groq_key} "
         f"postgresql+asyncpg://user:{database_password}@db.internal/app"
     )
 
@@ -15,6 +17,7 @@ def test_redact_secrets_removes_credentials_from_log_text() -> None:
 
     assert telegram_token not in redacted
     assert openai_key not in redacted
+    assert groq_key not in redacted
     assert database_password not in redacted
     assert "https://api.telegram.org/bot<redacted>/getUpdates" in redacted
 

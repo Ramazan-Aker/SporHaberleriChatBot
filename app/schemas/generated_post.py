@@ -6,6 +6,8 @@ from app.models.generated_post import PostCategory, PostStatus
 
 
 class GeneratedPostContent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     post_text: str = Field(min_length=1)
     category: PostCategory
     confidence: float = Field(ge=0, le=1)

@@ -10,7 +10,7 @@ from app.api.routes import articles, health, posts, sources
 from app.core.config import get_settings
 from app.core.database import SessionLocal
 from app.core.logging import configure_logging
-from app.integrations.ai.openai_client import OpenAIClient
+from app.integrations.ai.factory import create_ai_client
 from app.integrations.rss.rss_client import RSSClient
 from app.jobs.news_job import NewsJob
 from app.services.content_generator import ContentGenerator
@@ -40,11 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     if settings.scheduler_enabled:
         rss_client = RSSClient(timeout_seconds=settings.http_timeout_seconds)
-        ai_client = OpenAIClient(
-            api_key=settings.openai_api_key or "",
-            model=settings.openai_model or "",
-            timeout_seconds=settings.http_timeout_seconds,
-        )
+        ai_client = create_ai_client(settings)
         collector = NewsCollector(
             session_factory=SessionLocal,
             rss_client=rss_client,

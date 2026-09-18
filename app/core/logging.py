@@ -12,6 +12,7 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (re.compile(r"\b\d{6,}:[A-Za-z0-9_-]{20,}\b"), "<redacted-telegram-token>"),
     (re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{10,}\b"), "<redacted-openai-key>"),
+    (re.compile(r"\bgsk_[A-Za-z0-9_-]{10,}\b"), "<redacted-groq-key>"),
     (
         re.compile(r"(authorization:\s*bearer\s+)[^\s,;]+", re.IGNORECASE),
         r"\1<redacted>",

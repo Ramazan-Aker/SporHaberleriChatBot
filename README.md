@@ -1,8 +1,8 @@
 # Spor Haberleri İçerik Üretim Sistemi
 
 Bu servis RSS/Atom kaynaklarını tarar, yeni haberleri tekrar kontrolünden geçirir,
-OpenAI ile kısa bir Türkçe X gönderisi üretir ve kullanıcı onayı için Telegram'a
-gönderir. X API kullanılmaz; son paylaşım kullanıcıya aittir.
+OpenAI veya Groq ile kısa bir Türkçe X gönderisi üretir ve kullanıcı onayı için
+Telegram'a gönderir. X API kullanılmaz; son paylaşım kullanıcıya aittir.
 
 ## Mimari
 
@@ -11,7 +11,7 @@ Tek FastAPI süreci dört ana işi yürütür:
 1. APScheduler aktif kaynakları periyodik olarak çağırır.
 2. RSS istemcisi girdileri ayrıştırır; repository katmanı URL ve başlık hash'iyle
    tekrarları eler.
-3. İçerik servisi OpenAI Responses API'den Pydantic structured output alır.
+3. İçerik servisi seçilen AI sağlayıcısından doğrulanmış structured output alır.
 4. Telegram botu metni onaylama, reddetme, düzenleme ve kopyalama akışını sunar.
 
 Her haber ayrı transaction içinde işlenir. Bir RSS, AI veya Telegram hatası diğer
@@ -22,7 +22,7 @@ kaynakları durdurmaz. Uygulama `app/models`, `schemas`, `repositories`, `servic
 
 - Python 3.12+
 - PostgreSQL 14+ (Compose PostgreSQL 16 kullanır)
-- OpenAI API anahtarı ve erişilebilir bir model adı
+- OpenAI veya Groq API anahtarı ve erişilebilir bir model adı
 - Telegram bot token'ı, hedef chat ID ve izin verilen kullanıcı ID'si
 - Alternatif olarak Docker ve Docker Compose
 
@@ -48,8 +48,11 @@ ayarlanabilir. OpenAPI arayüzü `http://localhost:8000/docs`, health endpoint'i
 | Değişken | Açıklama | Varsayılan |
 |---|---|---|
 | `DATABASE_URL` | Async SQLAlchemy PostgreSQL URL'si | local PostgreSQL |
+| `AI_PROVIDER` | AI sağlayıcısı: `openai` veya `groq` | `openai` |
 | `OPENAI_API_KEY` | OpenAI API anahtarı | boş |
 | `OPENAI_MODEL` | Kullanılacak model kimliği | boş |
+| `GROQ_API_KEY` | Groq API anahtarı | boş |
+| `GROQ_MODEL` | Groq model kimliği | `openai/gpt-oss-20b` |
 | `TELEGRAM_BOT_TOKEN` | BotFather token'ı | boş |
 | `TELEGRAM_CHAT_ID` | Mesajların gönderileceği chat | boş |
 | `TELEGRAM_ALLOWED_USER_ID` | Butonları kullanabilecek kullanıcı | boş |
@@ -76,7 +79,26 @@ Migration uygulama: `alembic upgrade head`. Geri alma: `alembic downgrade -1`.
 Model değişikliğinden sonra migration üretmek için
 `alembic revision --autogenerate -m "aciklama"` kullanın ve çıktıyı inceleyin.
 
-## OpenAI kurulumu
+## AI sağlayıcısı kurulumu
+
+Ücretsiz Groq katmanını kullanmak için:
+
+```env
+AI_PROVIDER=groq
+GROQ_API_KEY=gsk_...
+GROQ_MODEL=openai/gpt-oss-20b
+```
+
+Groq istemcisi OpenAI uyumlu Chat Completions endpoint'ini ve strict JSON Schema
+çıktısını kullanır. Üretilen sonuç ayrıca Pydantic ile doğrulanır.
+
+OpenAI kullanmak için:
+
+```env
+AI_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=hesabinizdaki-model
+```
 
 OpenAI platformundan bir API anahtarı oluşturun, `.env` içinde
 `OPENAI_API_KEY` değerine yazın ve hesabınızda erişilebilir model kimliğini
@@ -147,8 +169,8 @@ black --check .
 pytest
 ```
 
-Testler SQLite ve mock istemciler kullanır; gerçek OpenAI, Telegram veya RSS
-çağrısı yapmaz.
+Testler SQLite ve mock istemciler kullanır; gerçek OpenAI, Groq, Telegram veya
+RSS çağrısı yapmaz.
 
 ## Railway deploy
 
@@ -168,7 +190,7 @@ uygulanır, uygulama Railway'in `PORT` değerini dinler ve `/health` ile izlenir
   açık internete sunmadan önce gateway veya uygulama authentication'ı ekleyin.
 - Database yedeği, merkezi log toplama, harcama limiti ve alarm kurun.
 - Kaynakların RSS kullanım şartlarını kontrol edin.
-- Telegram ve OpenAI anahtarlarını yalnız secret yönetiminde tutun.
+- Telegram ve AI anahtarlarını yalnız secret yönetiminde tutun.
 
 ## MVP dışında kalanlar
 
@@ -177,4 +199,3 @@ semantic duplicate detection, çoklu kaynak doğrulama, görsel üretimi, canlı
 takım/lig filtreleri, trend/öncelik analizi, engagement analytics ve birden fazla
 X hesabı bu sürümde uygulanmamıştır. Servis ve entegrasyon sınırları bu özellikler
 için genişletilebilir tutulmuştur.
-
