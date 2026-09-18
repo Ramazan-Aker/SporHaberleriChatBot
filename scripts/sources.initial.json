@@ -1,0 +1,47 @@
+[
+  {
+    "name": "TRT Haber Spor",
+    "url": "https://www.trthaber.com/spor",
+    "rss_url": "https://www.trthaber.com/spor_articles.rss",
+    "category": "sports",
+    "source_type": "official",
+    "credibility_score": 9,
+    "active": true
+  },
+  {
+    "name": "A Spor",
+    "url": "https://www.aspor.com.tr",
+    "rss_url": "https://www.aspor.com.tr/rss/news.xml",
+    "category": "sports",
+    "source_type": "news",
+    "credibility_score": 7,
+    "active": true
+  },
+  {
+    "name": "Transfermarkt Türkiye",
+    "url": "https://www.transfermarkt.com.tr",
+    "rss_url": "https://www.transfermarkt.com.tr/rss/news",
+    "category": "football",
+    "source_type": "statistics",
+    "credibility_score": 8,
+    "active": true
+  },
+  {
+    "name": "Habertürk Spor",
+    "url": "https://www.haberturk.com/spor",
+    "rss_url": "https://www.haberturk.com/rss/spor.xml",
+    "category": "sports",
+    "source_type": "news",
+    "credibility_score": 8,
+    "active": true
+  },
+  {
+    "name": "NTV Spor Futbol",
+    "url": "https://www.ntvspor.net/futbol",
+    "rss_url": "https://www.ntvspor.net/rss/kategori/futbol",
+    "category": "football",
+    "source_type": "news",
+    "credibility_score": 8,
+    "active": true
+  }
+]
