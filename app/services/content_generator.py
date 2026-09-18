@@ -16,6 +16,8 @@ logger = structlog.get_logger(__name__)
 SYSTEM_PROMPT = """Sen Türkçe yayın yapan profesyonel bir spor haber editörüsün.
 Yalnızca kullanıcı mesajında verilen haber kaynağındaki bilgileri kullan.
 Bilgi uydurma, haberi kopyalama, yanıltıcı veya abartılı clickbait kullanma.
+Kaynak başlığını ya da açıklamasındaki cümleleri aynen yeniden yayımlama; bilgiyi
+kendi cümlelerinle aktar ve kaynaktan art arda 10 veya daha fazla kelime kopyalama.
 Transfer iddialarını kesinleşmiş gibi yazma; 'iddia ediliyor', 'bildiriliyor'
 veya 'görüşmeler sürüyor' gibi kaynaktaki belirsizliği koruyan ifadeler kullan.
 Başlıktaki kelimelerden olayın bağlamını tahmin etme. Kim, kiminle, hangi konuda
@@ -81,6 +83,23 @@ MATCH_FINAL_CLAIM_TERMS = MATCH_FINAL_EVIDENCE_TERMS + (
     "galip ayrıldı",
 )
 HASHTAG_PATTERN = re.compile(r"(?<!\w)#\w+")
+WORD_PATTERN = re.compile(r"\w+")
+MAX_VERBATIM_WORDS = 10
+
+
+def _contains_verbatim_sequence(output: str, source: str) -> bool:
+    output_words = WORD_PATTERN.findall(output.casefold())
+    source_words = WORD_PATTERN.findall(source.casefold())
+    if min(len(output_words), len(source_words)) < MAX_VERBATIM_WORDS:
+        return False
+    source_sequences = {
+        tuple(source_words[index : index + MAX_VERBATIM_WORDS])
+        for index in range(len(source_words) - MAX_VERBATIM_WORDS + 1)
+    }
+    return any(
+        tuple(output_words[index : index + MAX_VERBATIM_WORDS]) in source_sequences
+        for index in range(len(output_words) - MAX_VERBATIM_WORDS + 1)
+    )
 
 
 @dataclass(slots=True)
@@ -157,6 +176,11 @@ class ContentGenerator:
             raise ValueError("AI added an unsupported final match result")
         if len(HASHTAG_PATTERN.findall(result.post_text)) > 2:
             raise ValueError("AI added more than two hashtags")
+        if any(
+            _contains_verbatim_sequence(result.post_text, source_part)
+            for source_part in (data.title, data.description or "")
+        ):
+            raise ValueError("AI copied a long verbatim sequence from the source")
 
     async def generate(self, data: ContentInput) -> GeneratedPostContent:
         user_prompt = (

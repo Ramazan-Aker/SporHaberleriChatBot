@@ -15,6 +15,7 @@ from app.services.content_generator import ContentGenerator, ContentInput
 from app.services.credibility_service import CredibilityService
 from app.services.duplicate_detector import DuplicateDetector, make_content_hash
 from app.services.quality_service import is_live_match_update, is_quality_article
+from app.services.source_usage_policy import source_is_approved_for_use
 
 logger = structlog.get_logger(__name__)
 
@@ -36,6 +37,7 @@ class NewsCollector:
         initial_lookback_hours: int = 24,
         only_current_day: bool = True,
         news_timezone: str = "Europe/Istanbul",
+        enforce_source_usage_policy: bool = True,
         failed_retry_limit: int = 5,
         max_processing_attempts: int = 3,
     ) -> None:
@@ -46,6 +48,7 @@ class NewsCollector:
         self.initial_lookback = timedelta(hours=initial_lookback_hours)
         self.only_current_day = only_current_day
         self.news_timezone = ZoneInfo(news_timezone)
+        self.enforce_source_usage_policy = enforce_source_usage_policy
         self.failed_retry_limit = failed_retry_limit
         self.max_processing_attempts = max_processing_attempts
         self.credibility = CredibilityService()
@@ -100,15 +103,30 @@ class NewsCollector:
                 )
                 for article in articles
                 if not is_live_match_update(article.title)
+                and not (
+                    self.enforce_source_usage_policy
+                    and not source_is_approved_for_use(
+                        article.source.url, article.source.rss_url
+                    )
+                )
                 and (
                     not self.only_current_day
                     or self._is_current_news_day(article.published_at)
                 )
             ]
             for article in articles:
-                if is_live_match_update(article.title) or (
-                    self.only_current_day
-                    and not self._is_current_news_day(article.published_at)
+                if (
+                    is_live_match_update(article.title)
+                    or (
+                        self.enforce_source_usage_policy
+                        and not source_is_approved_for_use(
+                            article.source.url, article.source.rss_url
+                        )
+                    )
+                    or (
+                        self.only_current_day
+                        and not self._is_current_news_day(article.published_at)
+                    )
                 ):
                     article.status = ArticleStatus.DISCOVERED
                     article.last_error = None
@@ -136,6 +154,15 @@ class NewsCollector:
         async with self.session_factory() as session:
             source = await SourceRepository(session).get(source_id)
             if source is None or not source.active:
+                return
+            if self.enforce_source_usage_policy and not source_is_approved_for_use(
+                source.url, source.rss_url
+            ):
+                logger.warning(
+                    "source_skipped_usage_not_approved",
+                    source=source.id,
+                    operation="source_usage_policy",
+                )
                 return
             first_scan = source.last_checked_at is None
             result = await self.rss_client.fetch(

@@ -17,8 +17,10 @@ from app.services.news_collector import NewsCollector
 class FakeRSSClient:
     def __init__(self, entries: list[FeedEntry]) -> None:
         self.entries = entries
+        self.calls = 0
 
     async def fetch(self, rss_url: str, *, etag=None, last_modified=None) -> FeedResult:
+        self.calls += 1
         if "broken" in rss_url:
             raise RuntimeError("feed unavailable")
         return FeedResult(self.entries, "etag", "last-modified")
@@ -56,13 +58,14 @@ class FailingNotifier:
 async def add_source(
     factory: async_sessionmaker[AsyncSession],
     *,
+    url: str = "https://www.aspor.com.tr",
     rss_url: str = "https://example.com/feed",
 ) -> int:
     async with factory() as session:
         source = await SourceRepository(session).create(
             SourceCreate(
                 name="Test Source",
-                url="https://example.com",
+                url=url,
                 rss_url=rss_url,
                 category="football",
                 source_type="news",
@@ -314,3 +317,45 @@ async def test_notification_failure_does_not_change_ready_article(
         article = await session.scalar(select(Article))
     assert article is not None
     assert article.status == ArticleStatus.READY
+
+
+@pytest.mark.asyncio
+async def test_permission_required_source_is_not_fetched(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await add_source(
+        session_factory,
+        url="https://www.haberturk.com/spor",
+        rss_url="https://www.haberturk.com/rss/spor.xml",
+    )
+    rss = FakeRSSClient([])
+    generator = FakeGenerator()
+    collector = NewsCollector(
+        session_factory=session_factory,
+        rss_client=rss,
+        content_generator=generator,
+        notifier=None,
+    )
+
+    await collector.fetch_news()
+
+    assert rss.calls == 0
+    assert generator.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_unreviewed_source_is_not_fetched(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await add_source(session_factory, url="https://example.com")
+    rss = FakeRSSClient([])
+    collector = NewsCollector(
+        session_factory=session_factory,
+        rss_client=rss,
+        content_generator=FakeGenerator(),
+        notifier=None,
+    )
+
+    await collector.fetch_news()
+
+    assert rss.calls == 0

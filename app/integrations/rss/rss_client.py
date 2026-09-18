@@ -1,10 +1,45 @@
 import calendar
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from html import unescape
+from html.parser import HTMLParser
 from time import struct_time
 
 import feedparser
 import httpx
+
+MAX_DESCRIPTION_LENGTH = 1200
+
+
+class _FeedTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._ignored_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.casefold() in {"script", "style"}:
+            self._ignored_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.casefold() in {"script", "style"} and self._ignored_depth:
+            self._ignored_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self._ignored_depth:
+            self.parts.append(data)
+
+
+def clean_feed_description(value: str) -> str | None:
+    extractor = _FeedTextExtractor()
+    extractor.feed(value)
+    text = re.sub(r"\s+", " ", unescape(" ".join(extractor.parts))).strip()
+    if not text:
+        return None
+    if len(text) > MAX_DESCRIPTION_LENGTH:
+        text = text[:MAX_DESCRIPTION_LENGTH].rsplit(" ", maxsplit=1)[0].rstrip()
+    return text or None
 
 
 @dataclass(slots=True)
@@ -63,16 +98,17 @@ class RSSClient:
         for raw in feed.entries:
             title = str(raw.get("title", "")).strip()
             url = str(raw.get("link", "")).strip()
-            description = str(
+            raw_description = str(
                 raw.get("summary") or raw.get("description") or ""
             ).strip()
+            description = clean_feed_description(raw_description)
             published = _to_datetime(
                 raw.get("published_parsed") or raw.get("updated_parsed")
             )
             entries.append(
                 FeedEntry(
                     title=title,
-                    description=description or None,
+                    description=description,
                     url=url,
                     published_at=published,
                 )

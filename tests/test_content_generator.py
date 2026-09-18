@@ -157,3 +157,49 @@ async def test_content_generator_retries_more_than_two_hashtags() -> None:
 
     assert result.post_text.endswith("#SuperLig")
     assert ai.calls == 2
+
+
+class VerbatimCopyAI:
+    model = "mock-model"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, *, system_prompt: str, user_prompt: str):
+        self.calls += 1
+        if self.calls == 1:
+            return GeneratedPostContent(
+                post_text=(
+                    "Takım yeni sezon hazırlıkları kapsamında bugün tesislerde "
+                    "ilk antrenmanını teknik ekip yönetiminde gerçekleştirdi."
+                ),
+                category=PostCategory.GENERAL,
+                confidence=0.8,
+            )
+        return GeneratedPostContent(
+            post_text="Yeni sezon mesaisi bugün yapılan çalışmayla başladı. #Futbol",
+            category=PostCategory.GENERAL,
+            confidence=0.8,
+        )
+
+
+async def test_content_generator_retries_long_verbatim_copy() -> None:
+    ai = VerbatimCopyAI()
+    generator = ContentGenerator(ai, max_length=120, max_attempts=2)
+
+    result = await generator.generate(
+        ContentInput(
+            title="Kulüp yeni sezon çalışmalarına başladı",
+            description=(
+                "Takım yeni sezon hazırlıkları kapsamında bugün tesislerde ilk "
+                "antrenmanını teknik ekip yönetiminde gerçekleştirdi."
+            ),
+            source_name="Spor Kaynağı",
+            url="https://example.com/training",
+            published_at=None,
+            credibility_score=7,
+        )
+    )
+
+    assert result.post_text.startswith("Yeni sezon mesaisi")
+    assert ai.calls == 2

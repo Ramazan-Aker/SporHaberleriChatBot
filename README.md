@@ -62,6 +62,7 @@ ayarlanabilir. OpenAPI arayüzü `http://localhost:8000/docs`, health endpoint'i
 | `NEWS_INITIAL_LOOKBACK_HOURS` | İlk taramada üretilecek geçmiş pencere | `24` |
 | `NEWS_ONLY_CURRENT_DAY` | Yalnız yerel takvim günündeki haberleri işler | `true` |
 | `NEWS_TIMEZONE` | Haber günü hesabında kullanılan saat dilimi | `Europe/Istanbul` |
+| `ENFORCE_SOURCE_USAGE_POLICY` | Yazılı izin isteyen kaynakları engeller | `true` |
 | `MAX_POST_LENGTH` | AI ve düzenleme karakter sınırı | `260` |
 | `HTTP_TIMEOUT_SECONDS` | RSS/OpenAI zaman aşımı | `15` |
 | `EXTERNAL_API_MAX_RETRIES` | AI deneme sayısı | `3` |
@@ -162,6 +163,14 @@ verisi olarak saklanır. Bu ayar kapatılırsa ilk taramada son 24 saat politika
 kullanılır. Sonraki taramalarda yeni tarihsiz kayıtlar işlenir. ETag ve
 Last-Modified değerleri gereksiz indirmeleri azaltır.
 
+Kaynak hakları politikası varsayılan olarak açıktır. Yazılı izin isteyen veya henüz
+incelenmemiş kaynaklar aktif edilemez; migration izin isteyen mevcut kayıtları
+pasifleştirir. `GET /sources` yanıtında `usage_status`, `usage_terms_url` ve
+`usage_note` alanları bulunur.
+TRT Haber ve A Spor yalnız kısa yeniden yazılmış özet, kaynak adı ve asıl bağlantı
+ile kullanılır. Güncel inceleme ve kararların ayrıntısı
+[`docs/source-usage-review.md`](docs/source-usage-review.md) dosyasındadır.
+
 ## Docker Compose
 
 `.env.example` dosyasını `.env` adıyla kopyalayın ve secret'ları doldurun:
@@ -202,7 +211,8 @@ uygulanır, uygulama Railway'in `PORT` değerini dinler ve `/health` ile izlenir
 - API ilk sürümde authentication içermez. Kaynak yönetim endpoint'lerini herkese
   açık internete sunmadan önce gateway veya uygulama authentication'ı ekleyin.
 - Database yedeği, merkezi log toplama, harcama limiti ve alarm kurun.
-- Kaynakların RSS kullanım şartlarını kontrol edin.
+- Kaynak kullanım incelemesini en az üç ayda bir yenileyin ve gelir elde etmeden
+  önce `rss_link_only` kaynaklardan yazılı ticari kullanım teyidi alın.
 - Telegram ve AI anahtarlarını yalnız secret yönetiminde tutun.
 
 ## MVP dışında kalanlar

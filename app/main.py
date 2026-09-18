@@ -54,6 +54,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             initial_lookback_hours=settings.news_initial_lookback_hours,
             only_current_day=settings.news_only_current_day,
             news_timezone=settings.news_timezone,
+            enforce_source_usage_policy=settings.enforce_source_usage_policy,
             failed_retry_limit=settings.ai_failed_retry_limit,
             max_processing_attempts=settings.external_api_max_retries,
         )
