@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     telegram_allowed_user_id: int | None = None
     news_fetch_interval_minutes: int = Field(default=5, ge=1)
     news_initial_lookback_hours: int = Field(default=24, ge=1)
+    news_only_current_day: bool = True
+    news_timezone: str = "Europe/Istanbul"
     max_post_length: int = Field(default=260, ge=50, le=1000)
     http_timeout_seconds: float = Field(default=15, gt=0, le=120)
     external_api_max_retries: int = Field(default=3, ge=1, le=10)

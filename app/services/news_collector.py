@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 import structlog
 from sqlalchemy.exc import IntegrityError
@@ -33,6 +34,8 @@ class NewsCollector:
         content_generator: ContentGenerator,
         notifier: PostNotifier | None,
         initial_lookback_hours: int = 24,
+        only_current_day: bool = True,
+        news_timezone: str = "Europe/Istanbul",
         failed_retry_limit: int = 5,
         max_processing_attempts: int = 3,
     ) -> None:
@@ -41,9 +44,18 @@ class NewsCollector:
         self.content_generator = content_generator
         self.notifier = notifier
         self.initial_lookback = timedelta(hours=initial_lookback_hours)
+        self.only_current_day = only_current_day
+        self.news_timezone = ZoneInfo(news_timezone)
         self.failed_retry_limit = failed_retry_limit
         self.max_processing_attempts = max_processing_attempts
         self.credibility = CredibilityService()
+
+    def _is_current_news_day(self, published_at: datetime | None) -> bool:
+        if published_at is None:
+            return True
+        local_published = published_at.astimezone(self.news_timezone).date()
+        local_today = datetime.now(self.news_timezone).date()
+        return local_published == local_today
 
     async def fetch_news(self) -> None:
         if self.notifier:
@@ -88,9 +100,16 @@ class NewsCollector:
                 )
                 for article in articles
                 if not is_live_match_update(article.title)
+                and (
+                    not self.only_current_day
+                    or self._is_current_news_day(article.published_at)
+                )
             ]
             for article in articles:
-                if is_live_match_update(article.title):
+                if is_live_match_update(article.title) or (
+                    self.only_current_day
+                    and not self._is_current_news_day(article.published_at)
+                ):
                     article.status = ArticleStatus.DISCOVERED
                     article.last_error = None
             await session.commit()
@@ -177,10 +196,16 @@ class NewsCollector:
             )
             return
 
-        should_process = not first_scan or (
-            entry.published_at is not None
-            and entry.published_at >= datetime.now(UTC) - self.initial_lookback
-        )
+        if self.only_current_day:
+            should_process = (
+                entry.published_at is not None
+                and self._is_current_news_day(entry.published_at)
+            ) or (not first_scan and entry.published_at is None)
+        else:
+            should_process = not first_scan or (
+                entry.published_at is not None
+                and entry.published_at >= datetime.now(UTC) - self.initial_lookback
+            )
         async with self.session_factory() as session:
             article_repository = ArticleRepository(session)
             detector = DuplicateDetector(article_repository)

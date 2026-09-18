@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import func, select
@@ -113,6 +114,40 @@ async def test_first_scan_stores_all_but_generates_only_recent(
     assert article_count == 3
     assert post_count == 1
     assert generator.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_first_scan_does_not_generate_yesterdays_local_news(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await add_source(session_factory)
+    local_now = datetime.now(ZoneInfo("Europe/Istanbul"))
+    yesterday_late = (local_now - timedelta(days=1)).replace(
+        hour=23, minute=59, second=0, microsecond=0
+    )
+    entry = FeedEntry(
+        "Dün gece yayımlanan yeterince uzun spor haberi",
+        "Haber açıklaması",
+        "https://example.com/yesterday",
+        yesterday_late.astimezone(UTC),
+    )
+    generator = FakeGenerator()
+    collector = NewsCollector(
+        session_factory=session_factory,
+        rss_client=FakeRSSClient([entry]),
+        content_generator=generator,
+        notifier=None,
+        only_current_day=True,
+        news_timezone="Europe/Istanbul",
+    )
+
+    await collector.fetch_news()
+
+    async with session_factory() as session:
+        article = await session.scalar(select(Article))
+    assert article is not None
+    assert article.status == ArticleStatus.DISCOVERED
+    assert generator.calls == 0
 
 
 @pytest.mark.asyncio

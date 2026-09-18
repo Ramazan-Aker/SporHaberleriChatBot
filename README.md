@@ -60,6 +60,8 @@ ayarlanabilir. OpenAPI arayüzü `http://localhost:8000/docs`, health endpoint'i
 | `TELEGRAM_ALLOWED_USER_ID` | Butonları kullanabilecek kullanıcı | boş |
 | `NEWS_FETCH_INTERVAL_MINUTES` | RSS tarama aralığı | `5` |
 | `NEWS_INITIAL_LOOKBACK_HOURS` | İlk taramada üretilecek geçmiş pencere | `24` |
+| `NEWS_ONLY_CURRENT_DAY` | Yalnız yerel takvim günündeki haberleri işler | `true` |
+| `NEWS_TIMEZONE` | Haber günü hesabında kullanılan saat dilimi | `Europe/Istanbul` |
 | `MAX_POST_LENGTH` | AI ve düzenleme karakter sınırı | `260` |
 | `HTTP_TIMEOUT_SECONDS` | RSS/OpenAI zaman aşımı | `15` |
 | `EXTERNAL_API_MAX_RETRIES` | AI deneme sayısı | `3` |
@@ -154,9 +156,11 @@ kopyalayıp düzenleyin, ardından çalıştırın:
 python -m scripts.seed_sources seed_sources.json
 ```
 
-İlk taramada feed kayıtlarının tamamı duplicate başlangıç verisi olarak saklanır;
-yalnız son 24 saatte tarihli olanlar AI'a gider. Sonraki taramalarda yeni tarihsiz
-kayıtlar da işlenir. ETag ve Last-Modified değerleri gereksiz indirmeleri azaltır.
+`NEWS_ONLY_CURRENT_DAY=true` iken yalnız `NEWS_TIMEZONE` saat diliminde bugüne ait
+tarihli haberler AI'a gider. Eski kayıtlar tekrar işlemeyi önlemek için başlangıç
+verisi olarak saklanır. Bu ayar kapatılırsa ilk taramada son 24 saat politikası
+kullanılır. Sonraki taramalarda yeni tarihsiz kayıtlar işlenir. ETag ve
+Last-Modified değerleri gereksiz indirmeleri azaltır.
 
 ## Docker Compose
 
