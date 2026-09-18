@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     openai_model: str | None = None
     groq_api_key: str | None = None
     groq_model: str = "openai/gpt-oss-20b"
+    groq_reasoning_effort: Literal["low", "medium", "high"] = "low"
+    groq_max_completion_tokens: int = Field(default=512, ge=128, le=4096)
     telegram_bot_token: str | None = None
     telegram_chat_id: int | None = None
     telegram_allowed_user_id: int | None = None
@@ -25,7 +27,7 @@ class Settings(BaseSettings):
     max_post_length: int = Field(default=260, ge=50, le=1000)
     http_timeout_seconds: float = Field(default=15, gt=0, le=120)
     external_api_max_retries: int = Field(default=3, ge=1, le=10)
-    ai_min_request_interval_seconds: float = Field(default=4, ge=0, le=60)
+    ai_min_request_interval_seconds: float = Field(default=12, ge=0, le=60)
     ai_failed_retry_limit: int = Field(default=5, ge=0, le=100)
     log_level: str = "INFO"
     scheduler_enabled: bool = False

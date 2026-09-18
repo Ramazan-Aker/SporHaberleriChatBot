@@ -9,6 +9,8 @@ def create_ai_client(settings: Settings) -> OpenAIClient | GroqClient:
             api_key=settings.groq_api_key or "",
             model=settings.groq_model,
             timeout_seconds=settings.http_timeout_seconds,
+            reasoning_effort=settings.groq_reasoning_effort,
+            max_completion_tokens=settings.groq_max_completion_tokens,
         )
     return OpenAIClient(
         api_key=settings.openai_api_key or "",

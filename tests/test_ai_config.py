@@ -23,3 +23,6 @@ def test_groq_provider_accepts_key_and_default_model() -> None:
     )
 
     assert settings.groq_model == "openai/gpt-oss-20b"
+    assert settings.groq_reasoning_effort == "low"
+    assert settings.groq_max_completion_tokens == 512
+    assert settings.ai_min_request_interval_seconds == 12

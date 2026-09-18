@@ -10,8 +10,12 @@ class GroqClient:
         api_key: str,
         model: str,
         timeout_seconds: float,
+        reasoning_effort: str = "low",
+        max_completion_tokens: int = 512,
     ) -> None:
         self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.max_completion_tokens = max_completion_tokens
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url="https://api.groq.com/openai/v1",
@@ -28,6 +32,8 @@ class GroqClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            reasoning_effort=self.reasoning_effort,
+            max_completion_tokens=self.max_completion_tokens,
             response_format={
                 "type": "json_schema",
                 "json_schema": {

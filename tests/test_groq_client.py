@@ -32,6 +32,8 @@ async def test_groq_client_requests_strict_structured_output() -> None:
     assert result.post_text == "Kısa haber"
     assert result.category == PostCategory.GENERAL
     kwargs = create.await_args.kwargs
+    assert kwargs["reasoning_effort"] == "low"
+    assert kwargs["max_completion_tokens"] == 512
     assert kwargs["response_format"]["json_schema"]["strict"] is True
     assert (
         kwargs["response_format"]["json_schema"]["schema"]["additionalProperties"]
