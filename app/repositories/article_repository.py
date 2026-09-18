@@ -45,14 +45,20 @@ class ArticleRepository:
         await self.session.flush()
         return article
 
-    async def get(self, article_id: int, *, with_posts: bool = False) -> Article | None:
-        if not with_posts:
+    async def get(
+        self,
+        article_id: int,
+        *,
+        with_posts: bool = False,
+        with_source: bool = False,
+    ) -> Article | None:
+        if not with_posts and not with_source:
             return await self.session.get(Article, article_id)
-        statement = (
-            select(Article)
-            .where(Article.id == article_id)
-            .options(selectinload(Article.generated_posts))
-        )
+        statement = select(Article).where(Article.id == article_id)
+        if with_posts:
+            statement = statement.options(selectinload(Article.generated_posts))
+        if with_source:
+            statement = statement.options(selectinload(Article.source))
         return await self.session.scalar(statement)
 
     async def list(

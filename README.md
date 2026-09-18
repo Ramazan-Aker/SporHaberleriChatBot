@@ -11,8 +11,12 @@ Tek FastAPI süreci dört ana işi yürütür:
 1. APScheduler aktif kaynakları periyodik olarak çağırır.
 2. RSS istemcisi girdileri ayrıştırır; repository katmanı URL ve başlık hash'iyle
    tekrarları eler.
-3. İçerik servisi seçilen AI sağlayıcısından doğrulanmış structured output alır.
-4. Telegram botu metni onaylama, reddetme, düzenleme ve kopyalama akışını sunar.
+3. FactExtractor ham RSS başlığı ve kısa özetinden structured, doğrulanabilir
+   olguları çıkarır. Duplicate ve kaynak politikası kontrolleri bundan önce çalışır.
+4. İçerik servisi yalnız FACT verilerinden özgün gönderi üretir; benzerlik ve
+   desteklenmeyen iddia kontrolleri sonucu doğrular.
+5. Telegram botu metni onaylama, reddetme, düzenleme, yeniden yazma ve X paylaşım
+   ekranını açma akışını sunar.
 
 Her haber ayrı transaction içinde işlenir. Bir RSS, AI veya Telegram hatası diğer
 kaynakları durdurmaz. Uygulama `app/models`, `schemas`, `repositories`, `services`,
@@ -63,7 +67,12 @@ ayarlanabilir. OpenAPI arayüzü `http://localhost:8000/docs`, health endpoint'i
 | `NEWS_ONLY_CURRENT_DAY` | Yalnız yerel takvim günündeki haberleri işler | `true` |
 | `NEWS_TIMEZONE` | Haber günü hesabında kullanılan saat dilimi | `Europe/Istanbul` |
 | `ENFORCE_SOURCE_USAGE_POLICY` | Yazılı izin isteyen kaynakları engeller | `true` |
+| `ENABLE_SOURCE_POLICY_CHECK` | Kaynak politika kontrolünü etkinleştirir | `true` |
 | `MAX_POST_LENGTH` | AI ve düzenleme karakter sınırı | `260` |
+| `MAX_SOURCE_SIMILARITY` | Kaynak başlığı/özeti için en yüksek benzerlik | `0.55` |
+| `ALLOW_EXTERNAL_MEDIA` | Dış kaynak görsellerine gelecekte izin verir | `false` |
+| `ALLOW_DIRECT_QUOTES` | AI doğrudan alıntılarına izin verir | `false` |
+| `ENABLE_CLAIM_VALIDATION` | İkinci AI iddia doğrulamasını açar | `true` |
 | `HTTP_TIMEOUT_SECONDS` | RSS/OpenAI zaman aşımı | `15` |
 | `EXTERNAL_API_MAX_RETRIES` | AI deneme sayısı | `3` |
 | `AI_MIN_REQUEST_INTERVAL_SECONDS` | AI çağrıları arasındaki en az süre | `12` |
@@ -125,7 +134,9 @@ alanlarını alır ve sonuç 260 karakter sınırından ayrıca uygulama tarafı
 5. `TELEGRAM_ENABLED=true` yapın.
 
 Bot hem kullanıcı hem chat kimliğini kontrol eder. Yeni haberde **Onayla**,
-**Reddet**, **Düzenle** ve **Metni Göster** düğmeleri gelir. Düzenleme sonrasında
+**Reddet**, **Düzenle**, **Yeniden Yaz**, **Metni Göster** ve **Kaynağı Aç**
+düğmeleri gelir. Yeniden yazma ham RSS metnini AI'a tekrar göndermez; veritabanına
+kaydedilmiş FACT verilerinden yeni, sürümlü bir post oluşturur. Düzenleme sonrasında
 yeni metin veritabanına `final_text` olarak kaydedilir. Onaylanan gönderideki
 **X'te Paylaş** düğmesi, metni, kaynak adını ve haber URL'sini X Web Intent ile
 hazır paylaşım ekranında açar; son gönderim kullanıcıya aittir ve X API anahtarı
@@ -144,6 +155,10 @@ gerekmez.
   "category": "football",
   "source_type": "news",
   "credibility_score": 8,
+  "commercial_use_status": "unknown",
+  "rss_usage_status": "unknown",
+  "terms_url": null,
+  "notes": "Kullanım koşulları incelenecek",
   "active": true
 }
 ```
@@ -163,13 +178,48 @@ verisi olarak saklanır. Bu ayar kapatılırsa ilk taramada son 24 saat politika
 kullanılır. Sonraki taramalarda yeni tarihsiz kayıtlar işlenir. ETag ve
 Last-Modified değerleri gereksiz indirmeleri azaltır.
 
-Kaynak hakları politikası varsayılan olarak açıktır. Yazılı izin isteyen veya henüz
-incelenmemiş kaynaklar aktif edilemez; migration izin isteyen mevcut kayıtları
-pasifleştirir. `GET /sources` yanıtında `usage_status`, `usage_terms_url` ve
-`usage_note` alanları bulunur.
-TRT Haber ve A Spor yalnız kısa yeniden yazılmış özet, kaynak adı ve asıl bağlantı
+Kaynak hakları politikası varsayılan olarak açıktır. Yeni kaynaklar `unknown`
+durumuyla başlar; sistem bunu izin verilmiş saymaz ve Telegram'da gösterir. RSS
+kullanımı `restricted` veya ticari kullanım `prohibited` ise kaynak aktif edilemez.
+Migration daha önce incelenen kısıtlı kaynakları pasifleştirir. `GET /sources`
+yanıtında `commercial_use_status`, `rss_usage_status`, `terms_url` ve `notes`
+alanları bulunur.
+TRT Haber ve A Spor yalnız FACT tabanlı özgün üretim, kaynak adı ve asıl bağlantı
 ile kullanılır. Güncel inceleme ve kararların ayrıntısı
 [`docs/source-usage-review.md`](docs/source-usage-review.md) dosyasındadır.
+
+## Content & Copyright Safety
+
+Sistem RSS'i makale yeniden yayımlamak için değil, haber keşfi ve doğrulanabilir
+olguları belirlemek için kullanır. Üretim hattı aşağıdaki sırayı izler:
+
+```text
+RSS → temel kalite → duplicate → kaynak politikası → FACT extraction
+    → FACT tabanlı özgün üretim → kaynak benzerliği → iddia doğrulama → Telegram
+```
+
+- Duplicate veya engellenmiş bir kaynak için AI çağrısı yapılmaz.
+- Normal bir yeni haber fact extraction, içerik üretimi ve iddia doğrulaması için
+  üç structured AI çağrısı kullanır. `ENABLE_CLAIM_VALIDATION=false` üçüncü çağrıyı
+  kapatır; doğruluk korumasını azaltır. Tüm aşamalar aynı
+  `AI_MIN_REQUEST_INTERVAL_SECONDS` hız sınırını paylaşır.
+- Ham başlık ve kısa RSS özeti yalnız FactExtractor aşamasında kullanılır.
+- ContentGenerator yalnız structured FACT, entity, event type, kesinlik, sayı,
+  kaynak türü ve güven skorlarını görür; orijinal URL ve RSS metni gönderilmez.
+- RSS istemcisi full article scraping yapmaz. HTML temizlenmiş kısa özet en fazla
+  1.200 karakter olarak saklanır.
+- Üretilen metin başlık ve özetle `%55` değerinden daha benzerse bir kez yeniden
+  üretilir. İkinci sonuç da yüksekse `content_review_required` olur.
+- ContentValidator FACT listesinde olmayan spesifik iddiaları denetler. Kalıcı
+  sorunlar normal onay akışına girmez ve Telegram'da inceleme uyarısı gösterir.
+- Dış kaynak fotoğrafı, videosu, thumbnail'i veya maç görüntüsü indirilmez.
+  `ALLOW_EXTERNAL_MEDIA=false` varsayılandır ve mevcut sürüm medya işlemez.
+- Doğrudan alıntı varsayılan olarak kapalıdır. Sayılar structured alanlarda tutulur
+  ve üretim sırasında yeni bir sayı eklenmesi reddedilir.
+- Kaynak URL'si doğrulama için Telegram'da gösterilir. Son düzenleme ve paylaşım
+  kararı kullanıcıya aittir.
+
+Bu teknik önlemler hukuki danışmanlık veya hukuki uygunluk garantisi değildir.
 
 ## Docker Compose
 

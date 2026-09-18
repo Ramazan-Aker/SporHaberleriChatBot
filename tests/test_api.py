@@ -61,8 +61,9 @@ async def test_permission_required_source_cannot_be_activated(
     created = await api_client.post("/sources", json=payload | {"active": False})
     assert created.status_code == 201
     source = created.json()
-    assert source["usage_status"] == "permission_required"
-    assert source["usage_terms_url"] == "https://www.haberturk.com/kullanim-kosullari"
+    assert source["commercial_use_status"] == "restricted"
+    assert source["rss_usage_status"] == "restricted"
+    assert source["terms_url"] == "https://www.haberturk.com/kullanim-kosullari"
 
     reactivation = await api_client.put(
         f"/sources/{source['id']}", json={"active": True}
@@ -70,7 +71,7 @@ async def test_permission_required_source_cannot_be_activated(
     assert reactivation.status_code == 422
 
 
-async def test_unreviewed_source_cannot_be_activated(
+async def test_unreviewed_source_remains_unknown(
     api_client: httpx.AsyncClient,
 ) -> None:
     response = await api_client.post(
@@ -86,4 +87,34 @@ async def test_unreviewed_source_cannot_be_activated(
         },
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 201
+    assert response.json()["commercial_use_status"] == "unknown"
+    assert response.json()["rss_usage_status"] == "unknown"
+
+
+async def test_url_change_cannot_bypass_reviewed_source_policy(
+    api_client: httpx.AsyncClient,
+) -> None:
+    created = await api_client.post(
+        "/sources",
+        json={
+            "name": "Başlangıç Kaynağı",
+            "url": "https://spor.example.com",
+            "rss_url": "https://spor.example.com/rss.xml",
+            "category": "sports",
+            "source_type": "news",
+            "credibility_score": 5,
+            "active": True,
+        },
+    )
+    source_id = created.json()["id"]
+
+    updated = await api_client.put(
+        f"/sources/{source_id}",
+        json={
+            "url": "https://www.haberturk.com/spor",
+            "rss_url": "https://www.haberturk.com/rss/spor.xml",
+        },
+    )
+
+    assert updated.status_code == 422

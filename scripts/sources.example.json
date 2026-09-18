@@ -6,7 +6,10 @@
     "category": "football",
     "source_type": "news",
     "credibility_score": 7,
+    "commercial_use_status": "unknown",
+    "rss_usage_status": "unknown",
+    "terms_url": null,
+    "notes": "Kullanım koşulları incelenecek",
     "active": false
   }
 ]
-

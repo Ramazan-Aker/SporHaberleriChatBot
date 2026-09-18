@@ -25,7 +25,13 @@ def test_keyboard_contains_expected_actions() -> None:
     callbacks = [
         button.callback_data for row in keyboard.inline_keyboard for button in row
     ]
-    assert callbacks == ["approve:42", "reject:42", "edit:42", "show:42"]
+    assert callbacks == [
+        "approve:42",
+        "reject:42",
+        "edit:42",
+        "regenerate:42",
+        "show:42",
+    ]
 
 
 def test_x_share_url_contains_post_source_and_article_url() -> None:

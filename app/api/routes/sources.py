@@ -3,24 +3,29 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
+from app.models.source import CommercialUseStatus, RSSUsageStatus
 from app.repositories.source_repository import SourceRepository
 from app.schemas.source import SourceCreate, SourceRead, SourceUpdate
-from app.services.source_usage_policy import (
-    classify_source_usage,
-    source_is_approved_for_use,
-)
+from app.services.source_usage_policy import classify_source_usage
 
 router = APIRouter(prefix="/sources", tags=["sources"])
 
 
-def _ensure_activation_allowed(*, url: str, rss_url: str, active: bool) -> None:
-    if active and not source_is_approved_for_use(url, rss_url):
-        policy = classify_source_usage(url, rss_url)
+def _ensure_activation_allowed(
+    *,
+    commercial_status: CommercialUseStatus,
+    rss_status: RSSUsageStatus,
+    active: bool,
+) -> None:
+    if active and (
+        commercial_status == CommercialUseStatus.PROHIBITED
+        or rss_status == RSSUsageStatus.RESTRICTED
+    ):
         raise HTTPException(
             status_code=422,
             detail=(
-                f"Source usage status is '{policy.status}' and it cannot be "
-                "activated until its commercial-use review allows it"
+                "Source cannot be activated because commercial use is prohibited "
+                "or RSS use is restricted"
             ),
         )
 
@@ -37,8 +42,19 @@ async def list_sources(
 async def create_source(
     data: SourceCreate, session: AsyncSession = Depends(get_session)
 ) -> SourceRead:
+    reviewed = classify_source_usage(str(data.url), str(data.rss_url))
     _ensure_activation_allowed(
-        url=str(data.url), rss_url=str(data.rss_url), active=data.active
+        commercial_status=(
+            reviewed.commercial_use_status
+            if data.commercial_use_status == CommercialUseStatus.UNKNOWN
+            else data.commercial_use_status
+        ),
+        rss_status=(
+            reviewed.rss_usage_status
+            if data.rss_usage_status == RSSUsageStatus.UNKNOWN
+            else data.rss_usage_status
+        ),
+        active=data.active,
     )
     try:
         source = await SourceRepository(session).create(data)
@@ -60,9 +76,24 @@ async def update_source(
     source = await repository.get(source_id)
     if source is None:
         raise HTTPException(status_code=404, detail="Source not found")
+    candidate_url = str(data.url or source.url)
+    candidate_rss_url = str(data.rss_url or source.rss_url)
+    reviewed = classify_source_usage(candidate_url, candidate_rss_url)
+    inferred_updates: dict[str, object] = {}
+    urls_changed = data.url is not None or data.rss_url is not None
+    if urls_changed and data.commercial_use_status is None:
+        inferred_updates["commercial_use_status"] = reviewed.commercial_use_status
+    if urls_changed and data.rss_usage_status is None:
+        inferred_updates["rss_usage_status"] = reviewed.rss_usage_status
+    if urls_changed and data.terms_url is None and reviewed.terms_url:
+        inferred_updates["terms_url"] = reviewed.terms_url
+    if urls_changed and data.notes is None and reviewed.note:
+        inferred_updates["notes"] = reviewed.note
+    if inferred_updates:
+        data = data.model_copy(update=inferred_updates)
     _ensure_activation_allowed(
-        url=str(data.url or source.url),
-        rss_url=str(data.rss_url or source.rss_url),
+        commercial_status=(data.commercial_use_status or source.commercial_use_status),
+        rss_status=data.rss_usage_status or source.rss_usage_status,
         active=data.active if data.active is not None else source.active,
     )
     try:

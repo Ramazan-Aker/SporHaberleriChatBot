@@ -9,6 +9,7 @@ from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, fil
 
 from app.integrations.telegram.telegram_bot import (
     approval_keyboard,
+    blocked_source_text,
     build_application,
     notification_text,
     x_share_keyboard,
@@ -16,8 +17,10 @@ from app.integrations.telegram.telegram_bot import (
 )
 from app.models.article import ArticleStatus
 from app.models.generated_post import GeneratedPost, PostStatus
+from app.repositories.article_repository import ArticleRepository
 from app.repositories.post_repository import PostRepository
 from app.schemas.generated_post import GeneratedPostValidation
+from app.services.content_workflow import ContentWorkflow
 
 logger = structlog.get_logger(__name__)
 
@@ -31,16 +34,20 @@ class TelegramService:
         allowed_user_id: int,
         session_factory: async_sessionmaker[AsyncSession],
         max_post_length: int,
+        max_source_similarity: float = 0.55,
+        content_workflow: ContentWorkflow | None = None,
     ) -> None:
         self.chat_id = chat_id
         self.allowed_user_id = allowed_user_id
         self.session_factory = session_factory
         self.max_post_length = max_post_length
+        self.max_source_similarity = max_source_similarity
+        self.content_workflow = content_workflow
         self.application = build_application(token)
         self.application.add_handler(
             CallbackQueryHandler(
                 self._on_callback,
-                pattern=r"^(approve|reject|edit|show):\d+$",
+                pattern=r"^(approve|reject|edit|show|regenerate):\d+$",
             )
         )
         self.application.add_handler(
@@ -74,14 +81,23 @@ class TelegramService:
     async def notify_post(self, post_id: int) -> None:
         async with self.session_factory() as session:
             post = await PostRepository(session).get(post_id, with_article=True)
-            if post is None or post.status != PostStatus.READY:
+            if post is None or post.status not in {
+                PostStatus.READY,
+                PostStatus.REVIEW_REQUIRED,
+            }:
                 return
             try:
                 message = await self.application.bot.send_message(
                     chat_id=self.chat_id,
-                    text=notification_text(post),
+                    text=notification_text(
+                        post, max_source_similarity=self.max_source_similarity
+                    ),
                     parse_mode=ParseMode.HTML,
-                    reply_markup=approval_keyboard(post.id),
+                    reply_markup=approval_keyboard(
+                        post.id,
+                        source_url=post.article.url,
+                        review_required=post.status == PostStatus.REVIEW_REQUIRED,
+                    ),
                     disable_web_page_preview=True,
                 )
                 post.telegram_message_id = message.message_id
@@ -101,6 +117,18 @@ class TelegramService:
                     error=post.telegram_error,
                 )
             await session.commit()
+
+    async def notify_blocked_article(self, article_id: int) -> None:
+        async with self.session_factory() as session:
+            article = await ArticleRepository(session).get(article_id, with_source=True)
+            if article is None:
+                return
+            await self.application.bot.send_message(
+                chat_id=self.chat_id,
+                text=blocked_source_text(article),
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
 
     async def retry_pending(self) -> None:
         async with self.session_factory() as session:
@@ -133,6 +161,41 @@ class TelegramService:
             await self._approve(update, post_id)
         elif action == "reject":
             await self._reject(update, post_id)
+        elif action == "regenerate":
+            await self._regenerate(update, post_id)
+
+    async def _regenerate(self, update: Update, post_id: int) -> None:
+        query = update.callback_query
+        if query is None or query.message is None:
+            return
+        if self.content_workflow is None:
+            await query.message.reply_text("Yeniden yazma servisi etkin değil.")
+            return
+        async with self.session_factory() as session:
+            post = await PostRepository(session).get(post_id, with_article=True)
+            if post is None:
+                await query.message.reply_text("Gönderi bulunamadı.")
+                return
+            article_id = post.article_id
+        await query.message.reply_text(
+            "🔄 Kayıtlı bilgilerden yeni metin hazırlanıyor."
+        )
+        try:
+            result = await self.content_workflow.regenerate(article_id)
+            if result.post_id is None:
+                await query.message.reply_text("Yeni metin üretilemedi.")
+                return
+            await self.notify_post(result.post_id)
+            await query.message.reply_text("Yeni sürüm Telegram'a gönderildi.")
+        except Exception as error:
+            logger.exception(
+                "telegram_regeneration_failed",
+                post_id=post_id,
+                article_id=article_id,
+                operation="regenerate",
+                error=f"{type(error).__name__}: {error}",
+            )
+            await query.message.reply_text("Yeniden yazma sırasında hata oluştu.")
 
     async def _show_post(self, update: Update, post_id: int) -> None:
         query = update.callback_query
@@ -160,12 +223,19 @@ class TelegramService:
                 reply_markup = x_share_keyboard(post)
             elif post.status == PostStatus.REJECTED:
                 message = "Bu gönderi daha önce reddedildi."
+            elif post.status == PostStatus.REVIEW_REQUIRED:
+                message = (
+                    "Bu gönderi içerik incelemesi gerektiriyor. Önce düzenleyin "
+                    "veya yeniden yazın."
+                )
             else:
                 siblings = await session.scalars(
                     select(GeneratedPost).where(
                         GeneratedPost.article_id == post.article_id,
                         GeneratedPost.id != post.id,
-                        GeneratedPost.status == PostStatus.READY,
+                        GeneratedPost.status.in_(
+                            [PostStatus.READY, PostStatus.REVIEW_REQUIRED]
+                        ),
                     )
                 )
                 now = datetime.now(UTC)
@@ -198,7 +268,9 @@ class TelegramService:
                     select(GeneratedPost.id).where(
                         GeneratedPost.article_id == post.article_id,
                         GeneratedPost.id != post.id,
-                        GeneratedPost.status == PostStatus.READY,
+                        GeneratedPost.status.in_(
+                            [PostStatus.READY, PostStatus.REVIEW_REQUIRED]
+                        ),
                     )
                 )
                 if remaining is None:
@@ -227,16 +299,25 @@ class TelegramService:
             return
 
         async with self.session_factory() as session:
-            post = await PostRepository(session).get(int(post_id))
-            if post is None or post.status != PostStatus.READY:
+            post = await PostRepository(session).get(int(post_id), with_article=True)
+            if post is None or post.status not in {
+                PostStatus.READY,
+                PostStatus.REVIEW_REQUIRED,
+            }:
                 context.user_data.pop("editing_post_id", None)
                 await update.message.reply_text("Düzenlenebilir gönderi bulunamadı.")
                 return
             post.final_text = validated.text
             post.edited_by_user = True
+            post.status = PostStatus.READY
+            post.article.status = ArticleStatus.READY
             await session.commit()
         context.user_data.pop("editing_post_id", None)
         await update.message.reply_text(
             "Metin kaydedildi:\n\n" + validated.text,
-            reply_markup=approval_keyboard(int(post_id), edited=True),
+            reply_markup=approval_keyboard(
+                int(post_id),
+                source_url=post.article.url,
+                edited=True,
+            ),
         )

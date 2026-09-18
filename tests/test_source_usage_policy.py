@@ -1,49 +1,59 @@
 import pytest
 
+from app.models.source import CommercialUseStatus, RSSUsageStatus
 from app.services.source_usage_policy import (
-    SourceUsageStatus,
     classify_source_usage,
-    source_is_approved_for_use,
+    source_policy_blocks_processing,
+    source_policy_warning,
 )
 
 
 @pytest.mark.parametrize(
-    ("url", "expected"),
+    ("url", "commercial", "rss"),
     [
-        ("https://www.trthaber.com/spor", SourceUsageStatus.RSS_LINK_ONLY),
-        ("https://www.aspor.com.tr", SourceUsageStatus.RSS_LINK_ONLY),
+        (
+            "https://www.trthaber.com/spor",
+            CommercialUseStatus.UNKNOWN,
+            RSSUsageStatus.ALLOWED,
+        ),
+        (
+            "https://www.aspor.com.tr",
+            CommercialUseStatus.UNKNOWN,
+            RSSUsageStatus.ALLOWED,
+        ),
         (
             "https://www.haberturk.com/spor",
-            SourceUsageStatus.PERMISSION_REQUIRED,
+            CommercialUseStatus.RESTRICTED,
+            RSSUsageStatus.RESTRICTED,
         ),
         (
             "https://www.ntvspor.net/futbol",
-            SourceUsageStatus.PERMISSION_REQUIRED,
+            CommercialUseStatus.RESTRICTED,
+            RSSUsageStatus.RESTRICTED,
         ),
         (
-            "https://www.transfermarkt.com.tr",
-            SourceUsageStatus.PERMISSION_REQUIRED,
+            "https://spor.example.com",
+            CommercialUseStatus.UNKNOWN,
+            RSSUsageStatus.UNKNOWN,
         ),
-        ("https://spor.example.com", SourceUsageStatus.UNREVIEWED),
     ],
 )
-def test_classify_source_usage(url: str, expected: SourceUsageStatus) -> None:
-    assert classify_source_usage(url, f"{url}/rss").status == expected
+def test_classify_source_usage(
+    url: str, commercial: CommercialUseStatus, rss: RSSUsageStatus
+) -> None:
+    policy = classify_source_usage(url, f"{url}/rss")
+    assert policy.commercial_use_status == commercial
+    assert policy.rss_usage_status == rss
 
 
-def test_classify_source_usage_matches_subdomains() -> None:
-    policy = classify_source_usage(
-        "https://spor.haberturk.com", "https://feeds.haberturk.com/spor.xml"
+def test_source_policy_block_and_warning_rules() -> None:
+    assert source_policy_blocks_processing(
+        CommercialUseStatus.PROHIBITED, RSSUsageStatus.ALLOWED
     )
-
-    assert policy.status == SourceUsageStatus.PERMISSION_REQUIRED
-
-
-def test_only_reviewed_rss_link_sources_are_approved() -> None:
-    assert source_is_approved_for_use(
-        "https://www.trthaber.com/spor",
-        "https://www.trthaber.com/spor_articles.rss",
+    assert source_policy_blocks_processing(
+        CommercialUseStatus.RESTRICTED, RSSUsageStatus.RESTRICTED
     )
-    assert not source_is_approved_for_use(
-        "https://spor.example.com", "https://spor.example.com/rss.xml"
+    assert source_policy_warning(CommercialUseStatus.UNKNOWN, RSSUsageStatus.UNKNOWN)
+    assert not source_policy_blocks_processing(
+        CommercialUseStatus.RESTRICTED, RSSUsageStatus.ALLOWED
     )

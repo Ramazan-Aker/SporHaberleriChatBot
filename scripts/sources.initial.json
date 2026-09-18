@@ -6,6 +6,10 @@
     "category": "sports",
     "source_type": "official",
     "credibility_score": 9,
+    "commercial_use_status": "unknown",
+    "rss_usage_status": "allowed",
+    "terms_url": "https://www.trthaber.com/sitene_ekle.html",
+    "notes": "Resmi RSS mevcut; ticari yeniden yayın lisansı teyit edilmedi.",
     "active": true
   },
   {
@@ -15,6 +19,10 @@
     "category": "sports",
     "source_type": "news",
     "credibility_score": 7,
+    "commercial_use_status": "unknown",
+    "rss_usage_status": "allowed",
+    "terms_url": "https://www.aspor.com.tr/rss-bilgi",
+    "notes": "Resmi RSS mevcut; ticari yeniden yayın lisansı teyit edilmedi.",
     "active": true
   },
   {
@@ -24,6 +32,10 @@
     "category": "football",
     "source_type": "statistics",
     "credibility_score": 8,
+    "commercial_use_status": "restricted",
+    "rss_usage_status": "restricted",
+    "terms_url": "https://www.transfermarkt.com.tr/intern/anb",
+    "notes": "Yazılı izin olmadan işlenmez.",
     "active": false
   },
   {
@@ -33,6 +45,10 @@
     "category": "sports",
     "source_type": "news",
     "credibility_score": 8,
+    "commercial_use_status": "restricted",
+    "rss_usage_status": "restricted",
+    "terms_url": "https://www.haberturk.com/kullanim-kosullari",
+    "notes": "Yazılı izin olmadan işlenmez.",
     "active": false
   },
   {
@@ -42,6 +58,10 @@
     "category": "football",
     "source_type": "news",
     "credibility_score": 8,
+    "commercial_use_status": "restricted",
+    "rss_usage_status": "restricted",
+    "terms_url": "https://www.ntvspor.net/kullanim-kosullari",
+    "notes": "Yazılı izin olmadan işlenmez.",
     "active": false
   }
 ]

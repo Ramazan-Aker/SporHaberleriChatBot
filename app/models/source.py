@@ -20,6 +20,19 @@ class SourceType(StrEnum):
     STATISTICS = "statistics"
 
 
+class CommercialUseStatus(StrEnum):
+    UNKNOWN = "unknown"
+    ALLOWED = "allowed"
+    RESTRICTED = "restricted"
+    PROHIBITED = "prohibited"
+
+
+class RSSUsageStatus(StrEnum):
+    UNKNOWN = "unknown"
+    ALLOWED = "allowed"
+    RESTRICTED = "restricted"
+
+
 class Source(TimestampMixin, Base):
     __tablename__ = "sources"
     __table_args__ = (
@@ -43,6 +56,26 @@ class Source(TimestampMixin, Base):
     )
     credibility_score: Mapped[int] = mapped_column(Integer, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    commercial_use_status: Mapped[CommercialUseStatus] = mapped_column(
+        Enum(
+            CommercialUseStatus,
+            name="commercial_use_status",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        default=CommercialUseStatus.UNKNOWN,
+        nullable=False,
+    )
+    rss_usage_status: Mapped[RSSUsageStatus] = mapped_column(
+        Enum(
+            RSSUsageStatus,
+            name="rss_usage_status",
+            values_callable=lambda x: [e.value for e in x],
+        ),
+        default=RSSUsageStatus.UNKNOWN,
+        nullable=False,
+    )
+    terms_url: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     etag: Mapped[str | None] = mapped_column(String(500))
     last_modified: Mapped[str | None] = mapped_column(String(500))

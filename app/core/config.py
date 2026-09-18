@@ -27,7 +27,12 @@ class Settings(BaseSettings):
     news_only_current_day: bool = True
     news_timezone: str = "Europe/Istanbul"
     enforce_source_usage_policy: bool = True
+    enable_source_policy_check: bool = True
     max_post_length: int = Field(default=260, ge=50, le=1000)
+    max_source_similarity: float = Field(default=0.55, ge=0, le=1)
+    allow_external_media: bool = False
+    allow_direct_quotes: bool = False
+    enable_claim_validation: bool = True
     http_timeout_seconds: float = Field(default=15, gt=0, le=120)
     external_api_max_retries: int = Field(default=3, ge=1, le=10)
     ai_min_request_interval_seconds: float = Field(default=12, ge=0, le=60)

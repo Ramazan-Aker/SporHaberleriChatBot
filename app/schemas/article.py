@@ -21,6 +21,9 @@ class ArticleRead(BaseModel):
     credibility_score: int
     processing_attempts: int
     last_error: str | None
+    extracted_facts: dict[str, object] | None
+    fact_confidence: float | None
+    source_similarity: float | None
 
 
 class ArticleDetail(ArticleRead):

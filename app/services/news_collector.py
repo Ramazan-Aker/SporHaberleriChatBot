@@ -12,10 +12,11 @@ from app.repositories.article_repository import ArticleRepository
 from app.repositories.post_repository import PostRepository
 from app.repositories.source_repository import SourceRepository
 from app.services.content_generator import ContentGenerator, ContentInput
+from app.services.content_workflow import ContentWorkflow
 from app.services.credibility_service import CredibilityService
 from app.services.duplicate_detector import DuplicateDetector, make_content_hash
 from app.services.quality_service import is_live_match_update, is_quality_article
-from app.services.source_usage_policy import source_is_approved_for_use
+from app.services.source_usage_policy import source_policy_blocks_processing
 
 logger = structlog.get_logger(__name__)
 
@@ -33,6 +34,7 @@ class NewsCollector:
         session_factory: async_sessionmaker[AsyncSession],
         rss_client: RSSClient,
         content_generator: ContentGenerator,
+        content_workflow: ContentWorkflow | None = None,
         notifier: PostNotifier | None,
         initial_lookback_hours: int = 24,
         only_current_day: bool = True,
@@ -44,6 +46,7 @@ class NewsCollector:
         self.session_factory = session_factory
         self.rss_client = rss_client
         self.content_generator = content_generator
+        self.content_workflow = content_workflow
         self.notifier = notifier
         self.initial_lookback = timedelta(hours=initial_lookback_hours)
         self.only_current_day = only_current_day
@@ -105,8 +108,9 @@ class NewsCollector:
                 if not is_live_match_update(article.title)
                 and not (
                     self.enforce_source_usage_policy
-                    and not source_is_approved_for_use(
-                        article.source.url, article.source.rss_url
+                    and source_policy_blocks_processing(
+                        article.source.commercial_use_status,
+                        article.source.rss_usage_status,
                     )
                 )
                 and (
@@ -114,23 +118,30 @@ class NewsCollector:
                     or self._is_current_news_day(article.published_at)
                 )
             ]
+            blocked_article_ids: list[int] = []
             for article in articles:
-                if (
-                    is_live_match_update(article.title)
-                    or (
-                        self.enforce_source_usage_policy
-                        and not source_is_approved_for_use(
-                            article.source.url, article.source.rss_url
-                        )
+                policy_blocked = (
+                    self.enforce_source_usage_policy
+                    and source_policy_blocks_processing(
+                        article.source.commercial_use_status,
+                        article.source.rss_usage_status,
                     )
-                    or (
-                        self.only_current_day
-                        and not self._is_current_news_day(article.published_at)
-                    )
+                )
+                if policy_blocked:
+                    article.status = ArticleStatus.BLOCKED_SOURCE
+                    article.last_error = "Source policy blocks content generation"
+                    blocked_article_ids.append(article.id)
+                elif is_live_match_update(article.title) or (
+                    self.only_current_day
+                    and not self._is_current_news_day(article.published_at)
                 ):
                     article.status = ArticleStatus.DISCOVERED
                     article.last_error = None
             await session.commit()
+
+        if self.notifier and hasattr(self.notifier, "notify_blocked_article"):
+            for article_id in blocked_article_ids:
+                await self.notifier.notify_blocked_article(article_id)
 
         for article_id, source_id, content_input in retry_items:
             try:
@@ -155,8 +166,9 @@ class NewsCollector:
             source = await SourceRepository(session).get(source_id)
             if source is None or not source.active:
                 return
-            if self.enforce_source_usage_policy and not source_is_approved_for_use(
-                source.url, source.rss_url
+            if (
+                self.enforce_source_usage_policy
+                and source.rss_usage_status.value == "restricted"
             ):
                 logger.warning(
                     "source_skipped_usage_not_approved",
@@ -277,6 +289,26 @@ class NewsCollector:
     async def _generate_and_store(
         self, article_id: int, content_input: ContentInput
     ) -> None:
+        if self.content_workflow is not None:
+            result = await self.content_workflow.process_article(article_id)
+            if result.post_id is not None and self.notifier:
+                try:
+                    await self.notifier.notify_post(result.post_id)
+                except Exception as error:
+                    logger.exception(
+                        "post_notification_failed",
+                        post_id=result.post_id,
+                        article_id=article_id,
+                        operation="telegram_send",
+                        error=f"{type(error).__name__}: {error}",
+                    )
+            elif (
+                result.article_status == ArticleStatus.BLOCKED_SOURCE
+                and self.notifier
+                and hasattr(self.notifier, "notify_blocked_article")
+            ):
+                await self.notifier.notify_blocked_article(article_id)
+            return
         try:
             generated = await self.content_generator.generate(content_input)
             async with self.session_factory() as session:

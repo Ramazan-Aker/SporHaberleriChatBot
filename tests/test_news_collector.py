@@ -344,7 +344,7 @@ async def test_permission_required_source_is_not_fetched(
 
 
 @pytest.mark.asyncio
-async def test_unreviewed_source_is_not_fetched(
+async def test_unreviewed_source_is_fetched_with_warning_policy(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     await add_source(session_factory, url="https://example.com")
@@ -358,4 +358,4 @@ async def test_unreviewed_source_is_not_fetched(
 
     await collector.fetch_news()
 
-    assert rss.calls == 0
+    assert rss.calls == 1

@@ -1,50 +1,52 @@
 from dataclasses import dataclass
-from enum import StrEnum
 from urllib.parse import urlsplit
 
-
-class SourceUsageStatus(StrEnum):
-    RSS_LINK_ONLY = "rss_link_only"
-    PERMISSION_REQUIRED = "permission_required"
-    UNREVIEWED = "unreviewed"
+from app.models.source import CommercialUseStatus, RSSUsageStatus
 
 
 @dataclass(frozen=True, slots=True)
 class SourceUsagePolicy:
-    status: SourceUsageStatus
+    commercial_use_status: CommercialUseStatus
+    rss_usage_status: RSSUsageStatus
     terms_url: str | None
     note: str
 
 
+UNKNOWN_POLICY = SourceUsagePolicy(
+    commercial_use_status=CommercialUseStatus.UNKNOWN,
+    rss_usage_status=RSSUsageStatus.UNKNOWN,
+    terms_url=None,
+    note="Kaynak kullanım koşulları production öncesinde incelenmeli.",
+)
+
 _POLICIES: dict[str, SourceUsagePolicy] = {
     "trthaber.com": SourceUsagePolicy(
-        status=SourceUsageStatus.RSS_LINK_ONLY,
+        commercial_use_status=CommercialUseStatus.UNKNOWN,
+        rss_usage_status=RSSUsageStatus.ALLOWED,
         terms_url="https://www.trthaber.com/sitene_ekle.html",
-        note=(
-            "Resmi RSS sunuluyor; yalnız kısa yeniden yazılmış özet, kaynak ve "
-            "bağlantı kullanılmalı. Ticari yeniden yayın lisansı teyit edilmedi."
-        ),
+        note="Resmi RSS sunuluyor; açık ticari yeniden yayın lisansı teyit edilmedi.",
     ),
     "aspor.com.tr": SourceUsagePolicy(
-        status=SourceUsageStatus.RSS_LINK_ONLY,
+        commercial_use_status=CommercialUseStatus.UNKNOWN,
+        rss_usage_status=RSSUsageStatus.ALLOWED,
         terms_url="https://www.aspor.com.tr/rss-bilgi",
-        note=(
-            "Resmi RSS sunuluyor; yalnız kısa yeniden yazılmış özet, kaynak ve "
-            "bağlantı kullanılmalı. Ticari yeniden yayın lisansı teyit edilmedi."
-        ),
+        note="Resmi RSS sunuluyor; açık ticari yeniden yayın lisansı teyit edilmedi.",
     ),
     "transfermarkt.com.tr": SourceUsagePolicy(
-        status=SourceUsageStatus.PERMISSION_REQUIRED,
+        commercial_use_status=CommercialUseStatus.RESTRICTED,
+        rss_usage_status=RSSUsageStatus.RESTRICTED,
         terms_url="https://www.transfermarkt.com.tr/intern/anb",
         note="İçerik hakları saklı; ticari kullanım için yazılı izin gerekli.",
     ),
     "haberturk.com": SourceUsagePolicy(
-        status=SourceUsageStatus.PERMISSION_REQUIRED,
+        commercial_use_status=CommercialUseStatus.RESTRICTED,
+        rss_usage_status=RSSUsageStatus.RESTRICTED,
         terms_url="https://www.haberturk.com/kullanim-kosullari",
         note="Haber ve materyal kullanımı açık yazılı izne bağlı.",
     ),
     "ntvspor.net": SourceUsagePolicy(
-        status=SourceUsageStatus.PERMISSION_REQUIRED,
+        commercial_use_status=CommercialUseStatus.RESTRICTED,
+        rss_usage_status=RSSUsageStatus.RESTRICTED,
         terms_url="https://www.ntvspor.net/kullanim-kosullari",
         note="Haber ve materyal kullanımı açık yazılı izne bağlı.",
     ),
@@ -70,28 +72,37 @@ def classify_source_usage(url: str, rss_url: str) -> SourceUsagePolicy:
         if (policy := _policy_for_url(value)) is not None
     ]
     if not policies:
-        return SourceUsagePolicy(
-            status=SourceUsageStatus.UNREVIEWED,
-            terms_url=None,
-            note="Kaynak kullanım koşulları production öncesinde incelenmeli.",
-        )
+        return UNKNOWN_POLICY
     if any(
-        policy.status == SourceUsageStatus.PERMISSION_REQUIRED for policy in policies
+        policy.commercial_use_status == CommercialUseStatus.RESTRICTED
+        or policy.rss_usage_status == RSSUsageStatus.RESTRICTED
+        for policy in policies
     ):
         return next(
             policy
             for policy in policies
-            if policy.status == SourceUsageStatus.PERMISSION_REQUIRED
+            if policy.commercial_use_status == CommercialUseStatus.RESTRICTED
+            or policy.rss_usage_status == RSSUsageStatus.RESTRICTED
         )
     return policies[0]
 
 
-def source_requires_permission(url: str, rss_url: str) -> bool:
+def source_policy_blocks_processing(
+    commercial_status: CommercialUseStatus,
+    rss_status: RSSUsageStatus,
+) -> bool:
     return (
-        classify_source_usage(url, rss_url).status
-        == SourceUsageStatus.PERMISSION_REQUIRED
+        commercial_status == CommercialUseStatus.PROHIBITED
+        or rss_status == RSSUsageStatus.RESTRICTED
     )
 
 
-def source_is_approved_for_use(url: str, rss_url: str) -> bool:
-    return classify_source_usage(url, rss_url).status == SourceUsageStatus.RSS_LINK_ONLY
+def source_policy_warning(
+    commercial_status: CommercialUseStatus,
+    rss_status: RSSUsageStatus,
+) -> bool:
+    return (
+        commercial_status
+        in {CommercialUseStatus.UNKNOWN, CommercialUseStatus.RESTRICTED}
+        or rss_status == RSSUsageStatus.UNKNOWN
+    )

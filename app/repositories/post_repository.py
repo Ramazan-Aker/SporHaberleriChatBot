@@ -20,6 +20,10 @@ class PostRepository:
         ai_model: str,
         category: str,
         confidence: float,
+        status: PostStatus = PostStatus.READY,
+        source_similarity: float | None = None,
+        validation_confidence: float | None = None,
+        unsupported_claims: list[str] | None = None,
     ) -> GeneratedPost:
         version = (
             await self.session.scalar(
@@ -35,6 +39,10 @@ class PostRepository:
             ai_model=ai_model,
             category=category,
             confidence=confidence,
+            status=status,
+            source_similarity=source_similarity,
+            validation_confidence=validation_confidence,
+            unsupported_claims=unsupported_claims,
         )
         self.session.add(post)
         await self.session.flush()
@@ -57,7 +65,9 @@ class PostRepository:
         statement = (
             select(GeneratedPost)
             .where(
-                GeneratedPost.status == PostStatus.READY,
+                GeneratedPost.status.in_(
+                    [PostStatus.READY, PostStatus.REVIEW_REQUIRED]
+                ),
                 GeneratedPost.telegram_sent_at.is_(None),
                 (
                     GeneratedPost.next_notification_at.is_(None)

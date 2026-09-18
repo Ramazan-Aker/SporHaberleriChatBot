@@ -26,3 +26,8 @@ def test_groq_provider_accepts_key_and_default_model() -> None:
     assert settings.groq_reasoning_effort == "low"
     assert settings.groq_max_completion_tokens == 512
     assert settings.ai_min_request_interval_seconds == 12
+    assert settings.max_source_similarity == 0.55
+    assert settings.allow_external_media is False
+    assert settings.allow_direct_quotes is False
+    assert settings.enable_claim_validation is True
+    assert settings.enable_source_policy_check is True

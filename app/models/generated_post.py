@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Enum,
@@ -28,16 +29,20 @@ class PostStatus(StrEnum):
     READY = "ready"
     APPROVED = "approved"
     REJECTED = "rejected"
+    REVIEW_REQUIRED = "review_required"
 
 
 class PostCategory(StrEnum):
     BREAKING_NEWS = "breaking_news"
     TRANSFER = "transfer"
+    TRANSFER_RUMOR = "transfer_rumor"
+    OFFICIAL_TRANSFER = "official_transfer"
     MATCH_RESULT = "match_result"
     INJURY = "injury"
     LINEUP = "lineup"
     STATISTICS = "statistics"
     STATEMENT = "statement"
+    DISCIPLINARY = "disciplinary"
     GENERAL = "general"
 
 
@@ -76,6 +81,9 @@ class GeneratedPost(Base):
         nullable=False,
     )
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    source_similarity: Mapped[float | None] = mapped_column(Float)
+    validation_confidence: Mapped[float | None] = mapped_column(Float)
+    unsupported_claims: Mapped[list[str] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

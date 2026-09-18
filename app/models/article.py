@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     DateTime,
     Enum,
@@ -26,6 +27,8 @@ class ArticleStatus(StrEnum):
     REJECTED = "rejected"
     PUBLISHED = "published"
     PROCESSING_FAILED = "processing_failed"
+    CONTENT_REVIEW_REQUIRED = "content_review_required"
+    BLOCKED_SOURCE = "blocked_source"
 
 
 class Article(Base):
@@ -62,6 +65,9 @@ class Article(Base):
     credibility_score: Mapped[int] = mapped_column(Integer, nullable=False)
     processing_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_error: Mapped[str | None] = mapped_column(Text)
+    extracted_facts: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    fact_confidence: Mapped[float | None] = mapped_column()
+    source_similarity: Mapped[float | None] = mapped_column()
 
     source: Mapped["Source"] = relationship(back_populates="articles")  # noqa: F821
     generated_posts: Mapped[list["GeneratedPost"]] = relationship(  # noqa: F821

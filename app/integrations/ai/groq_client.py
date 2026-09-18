@@ -1,6 +1,11 @@
+from typing import TypeVar
+
 from openai import AsyncOpenAI
+from pydantic import BaseModel
 
 from app.schemas.generated_post import GeneratedPostContent
+
+StructuredModel = TypeVar("StructuredModel", bound=BaseModel)
 
 
 class GroqClient:
@@ -26,6 +31,19 @@ class GroqClient:
     async def generate(
         self, *, system_prompt: str, user_prompt: str
     ) -> GeneratedPostContent:
+        return await self.parse(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            response_model=GeneratedPostContent,
+        )
+
+    async def parse(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        response_model: type[StructuredModel],
+    ) -> StructuredModel:
         response = await self._client.chat.completions.create(
             model=self.model,
             messages=[
@@ -37,13 +55,13 @@ class GroqClient:
             response_format={
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "generated_post",
+                    "name": response_model.__name__.lower(),
                     "strict": True,
-                    "schema": GeneratedPostContent.model_json_schema(),
+                    "schema": response_model.model_json_schema(),
                 },
             },
         )
         content = response.choices[0].message.content
         if not content:
-            raise ValueError("Groq did not return a parseable post")
-        return GeneratedPostContent.model_validate_json(content)
+            raise ValueError("Groq did not return parseable structured output")
+        return response_model.model_validate_json(content)

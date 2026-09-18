@@ -1,11 +1,11 @@
 from datetime import datetime
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, computed_field
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
 
-from app.models.source import SourceType
-from app.services.source_usage_policy import (
-    SourceUsageStatus,
-    classify_source_usage,
+from app.models.source import (
+    CommercialUseStatus,
+    RSSUsageStatus,
+    SourceType,
 )
 
 
@@ -17,6 +17,10 @@ class SourceBase(BaseModel):
     source_type: SourceType
     credibility_score: int = Field(ge=1, le=10)
     active: bool = True
+    commercial_use_status: CommercialUseStatus = CommercialUseStatus.UNKNOWN
+    rss_usage_status: RSSUsageStatus = RSSUsageStatus.UNKNOWN
+    terms_url: AnyHttpUrl | None = None
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 class SourceCreate(SourceBase):
@@ -31,6 +35,10 @@ class SourceUpdate(BaseModel):
     source_type: SourceType | None = None
     credibility_score: int | None = Field(default=None, ge=1, le=10)
     active: bool | None = None
+    commercial_use_status: CommercialUseStatus | None = None
+    rss_usage_status: RSSUsageStatus | None = None
+    terms_url: AnyHttpUrl | None = None
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 class SourceRead(SourceBase):
@@ -40,18 +48,3 @@ class SourceRead(SourceBase):
     created_at: datetime
     updated_at: datetime
     last_checked_at: datetime | None
-
-    @computed_field
-    @property
-    def usage_status(self) -> SourceUsageStatus:
-        return classify_source_usage(str(self.url), str(self.rss_url)).status
-
-    @computed_field
-    @property
-    def usage_terms_url(self) -> str | None:
-        return classify_source_usage(str(self.url), str(self.rss_url)).terms_url
-
-    @computed_field
-    @property
-    def usage_note(self) -> str:
-        return classify_source_usage(str(self.url), str(self.rss_url)).note

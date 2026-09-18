@@ -25,6 +25,9 @@ class GeneratedPostRead(BaseModel):
     status: PostStatus
     category: PostCategory
     confidence: float
+    source_similarity: float | None
+    validation_confidence: float | None
+    unsupported_claims: list[str] | None
     created_at: datetime
     approved_at: datetime | None
     rejected_at: datetime | None

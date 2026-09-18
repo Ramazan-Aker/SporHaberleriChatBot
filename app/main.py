@@ -14,6 +14,10 @@ from app.integrations.ai.factory import create_ai_client
 from app.integrations.rss.rss_client import RSSClient
 from app.jobs.news_job import NewsJob
 from app.services.content_generator import ContentGenerator
+from app.services.content_safety_service import ContentSafetyService
+from app.services.content_validator import ContentValidator
+from app.services.content_workflow import ContentWorkflow
+from app.services.fact_extractor import FactExtractor
 from app.services.news_collector import NewsCollector
 from app.services.telegram_service import TelegramService
 
@@ -27,6 +31,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     telegram: TelegramService | None = None
     rss_client: RSSClient | None = None
     scheduler: AsyncIOScheduler | None = None
+    content_workflow: ContentWorkflow | None = None
+    content_generator: ContentGenerator | None = None
+
+    if settings.scheduler_enabled:
+        ai_client = create_ai_client(settings)
+        content_generator = ContentGenerator(
+            ai_client,
+            max_length=settings.max_post_length,
+            max_attempts=settings.external_api_max_retries,
+            min_request_interval_seconds=settings.ai_min_request_interval_seconds,
+            allow_direct_quotes=settings.allow_direct_quotes,
+        )
+        content_workflow = ContentWorkflow(
+            session_factory=SessionLocal,
+            fact_extractor=FactExtractor(
+                ai_client,
+                max_attempts=settings.external_api_max_retries,
+                allow_direct_quotes=settings.allow_direct_quotes,
+                before_request=content_generator.wait_for_request_slot,
+            ),
+            content_generator=content_generator,
+            safety_service=ContentSafetyService(settings.max_source_similarity),
+            content_validator=(
+                ContentValidator(
+                    ai_client,
+                    max_attempts=settings.external_api_max_retries,
+                    before_request=content_generator.wait_for_request_slot,
+                )
+                if settings.enable_claim_validation
+                else None
+            ),
+            enable_claim_validation=settings.enable_claim_validation,
+            enable_source_policy_check=settings.enable_source_policy_check,
+        )
 
     if settings.telegram_enabled:
         telegram = TelegramService(
@@ -35,26 +73,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             allowed_user_id=settings.telegram_allowed_user_id or 0,
             session_factory=SessionLocal,
             max_post_length=settings.max_post_length,
+            max_source_similarity=settings.max_source_similarity,
+            content_workflow=content_workflow,
         )
         await telegram.start()
 
     if settings.scheduler_enabled:
         rss_client = RSSClient(timeout_seconds=settings.http_timeout_seconds)
-        ai_client = create_ai_client(settings)
+        if content_generator is None or content_workflow is None:
+            raise RuntimeError("Content workflow was not initialized")
         collector = NewsCollector(
             session_factory=SessionLocal,
             rss_client=rss_client,
-            content_generator=ContentGenerator(
-                ai_client,
-                max_length=settings.max_post_length,
-                max_attempts=settings.external_api_max_retries,
-                min_request_interval_seconds=(settings.ai_min_request_interval_seconds),
-            ),
+            content_generator=content_generator,
+            content_workflow=content_workflow,
             notifier=telegram,
             initial_lookback_hours=settings.news_initial_lookback_hours,
             only_current_day=settings.news_only_current_day,
             news_timezone=settings.news_timezone,
-            enforce_source_usage_policy=settings.enforce_source_usage_policy,
+            enforce_source_usage_policy=(
+                settings.enforce_source_usage_policy
+                and settings.enable_source_policy_check
+            ),
             failed_retry_limit=settings.ai_failed_retry_limit,
             max_processing_attempts=settings.external_api_max_retries,
         )
