@@ -48,9 +48,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 ai_client,
                 max_length=settings.max_post_length,
                 max_attempts=settings.external_api_max_retries,
+                min_request_interval_seconds=(settings.ai_min_request_interval_seconds),
             ),
             notifier=telegram,
             initial_lookback_hours=settings.news_initial_lookback_hours,
+            failed_retry_limit=settings.ai_failed_retry_limit,
+            max_processing_attempts=settings.external_api_max_retries,
         )
         job = NewsJob(collector)
         scheduler = AsyncIOScheduler(timezone="UTC")

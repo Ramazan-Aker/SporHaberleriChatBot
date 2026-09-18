@@ -33,17 +33,22 @@ class NewsCollector:
         content_generator: ContentGenerator,
         notifier: PostNotifier | None,
         initial_lookback_hours: int = 24,
+        failed_retry_limit: int = 5,
+        max_processing_attempts: int = 3,
     ) -> None:
         self.session_factory = session_factory
         self.rss_client = rss_client
         self.content_generator = content_generator
         self.notifier = notifier
         self.initial_lookback = timedelta(hours=initial_lookback_hours)
+        self.failed_retry_limit = failed_retry_limit
+        self.max_processing_attempts = max_processing_attempts
         self.credibility = CredibilityService()
 
     async def fetch_news(self) -> None:
         if self.notifier:
             await self.notifier.retry_pending()
+        await self._retry_failed_articles()
         async with self.session_factory() as session:
             source_ids = [
                 source.id
@@ -57,6 +62,48 @@ class NewsCollector:
                     "source_collection_failed",
                     source=source_id,
                     operation="fetch_rss",
+                    error=f"{type(error).__name__}: {error}",
+                )
+
+    async def _retry_failed_articles(self) -> None:
+        if self.failed_retry_limit == 0:
+            return
+        async with self.session_factory() as session:
+            articles = await ArticleRepository(session).list_processing_failed(
+                limit=self.failed_retry_limit,
+                max_attempts=self.max_processing_attempts,
+            )
+            retry_items = [
+                (
+                    article.id,
+                    article.source_id,
+                    ContentInput(
+                        title=article.title,
+                        description=article.description,
+                        source_name=article.source.name,
+                        url=article.url,
+                        published_at=article.published_at,
+                        credibility_score=article.credibility_score,
+                    ),
+                )
+                for article in articles
+            ]
+
+        for article_id, source_id, content_input in retry_items:
+            try:
+                await self._generate_and_store(article_id, content_input)
+                logger.info(
+                    "failed_article_recovered",
+                    source=source_id,
+                    article_id=article_id,
+                    operation="retry_article",
+                )
+            except Exception as error:
+                logger.warning(
+                    "failed_article_retry_failed",
+                    source=source_id,
+                    article_id=article_id,
+                    operation="retry_article",
                     error=f"{type(error).__name__}: {error}",
                 )
 
@@ -150,17 +197,23 @@ class NewsCollector:
         if not should_process:
             return
 
+        await self._generate_and_store(
+            article_id,
+            ContentInput(
+                title=entry.title,
+                description=entry.description,
+                source_name=source_name,
+                url=entry.url,
+                published_at=entry.published_at,
+                credibility_score=credibility,
+            ),
+        )
+
+    async def _generate_and_store(
+        self, article_id: int, content_input: ContentInput
+    ) -> None:
         try:
-            generated = await self.content_generator.generate(
-                ContentInput(
-                    title=entry.title,
-                    description=entry.description,
-                    source_name=source_name,
-                    url=entry.url,
-                    published_at=entry.published_at,
-                    credibility_score=credibility,
-                )
-            )
+            generated = await self.content_generator.generate(content_input)
             async with self.session_factory() as session:
                 article = await ArticleRepository(session).get(article_id)
                 if article is None:

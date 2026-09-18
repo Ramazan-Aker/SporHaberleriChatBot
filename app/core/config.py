@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     max_post_length: int = Field(default=260, ge=50, le=1000)
     http_timeout_seconds: float = Field(default=15, gt=0, le=120)
     external_api_max_retries: int = Field(default=3, ge=1, le=10)
+    ai_min_request_interval_seconds: float = Field(default=4, ge=0, le=60)
+    ai_failed_retry_limit: int = Field(default=5, ge=0, le=100)
     log_level: str = "INFO"
     scheduler_enabled: bool = False
     telegram_enabled: bool = False

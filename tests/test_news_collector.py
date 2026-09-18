@@ -141,6 +141,38 @@ async def test_failed_ai_marks_article_without_losing_it(
 
 
 @pytest.mark.asyncio
+async def test_failed_article_is_retried_on_next_job(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await add_source(session_factory)
+    entry = FeedEntry(
+        "Yeniden denenecek yeterince uzun spor haberi",
+        "Haber açıklaması",
+        "https://example.com/retry-failed",
+        datetime.now(UTC),
+    )
+    generator = FakeGenerator(fail=True)
+    collector = NewsCollector(
+        session_factory=session_factory,
+        rss_client=FakeRSSClient([entry]),
+        content_generator=generator,
+        notifier=None,
+    )
+
+    await collector.fetch_news()
+    generator.fail = False
+    await collector.fetch_news()
+
+    async with session_factory() as session:
+        article = await session.scalar(select(Article))
+        post_count = await session.scalar(select(func.count(GeneratedPost.id)))
+    assert article is not None
+    assert article.status == ArticleStatus.READY
+    assert article.processing_attempts == 2
+    assert post_count == 1
+
+
+@pytest.mark.asyncio
 async def test_subsequent_scan_processes_new_undated_entry(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

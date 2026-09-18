@@ -61,6 +61,8 @@ ayarlanabilir. OpenAPI arayüzü `http://localhost:8000/docs`, health endpoint'i
 | `MAX_POST_LENGTH` | AI ve düzenleme karakter sınırı | `260` |
 | `HTTP_TIMEOUT_SECONDS` | RSS/OpenAI zaman aşımı | `15` |
 | `EXTERNAL_API_MAX_RETRIES` | AI deneme sayısı | `3` |
+| `AI_MIN_REQUEST_INTERVAL_SECONDS` | AI çağrıları arasındaki en az süre | `4` |
+| `AI_FAILED_RETRY_LIMIT` | Her job'da yeniden denenecek başarısız haber | `5` |
 | `SCHEDULER_ENABLED` | RSS/AI pipeline'ını açar | `false` |
 | `TELEGRAM_ENABLED` | Telegram polling'i açar | `false` |
 

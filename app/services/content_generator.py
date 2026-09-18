@@ -1,3 +1,5 @@
+import asyncio
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -40,11 +42,28 @@ class AIClient(Protocol):
 
 class ContentGenerator:
     def __init__(
-        self, ai_client: AIClient, *, max_length: int = 260, max_attempts: int = 3
+        self,
+        ai_client: AIClient,
+        *,
+        max_length: int = 260,
+        max_attempts: int = 3,
+        min_request_interval_seconds: float = 0,
     ) -> None:
         self.ai_client = ai_client
         self.max_length = max_length
         self.max_attempts = max_attempts
+        self.min_request_interval_seconds = min_request_interval_seconds
+        self._request_lock = asyncio.Lock()
+        self._last_request_at: float | None = None
+
+    async def _wait_for_request_slot(self) -> None:
+        async with self._request_lock:
+            if self._last_request_at is not None:
+                elapsed = time.monotonic() - self._last_request_at
+                delay = self.min_request_interval_seconds - elapsed
+                if delay > 0:
+                    await asyncio.sleep(delay)
+            self._last_request_at = time.monotonic()
 
     async def generate(self, data: ContentInput) -> GeneratedPostContent:
         user_prompt = (
@@ -62,6 +81,7 @@ class ContentGenerator:
             reraise=True,
         ):
             with attempt:
+                await self._wait_for_request_slot()
                 result = await self.ai_client.generate(
                     system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt
                 )

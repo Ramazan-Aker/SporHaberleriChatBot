@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 
 from sqlalchemy import Select, or_, select
@@ -74,5 +76,20 @@ class ArticleRepository:
             statement = statement.where(Article.published_at <= date_to)
         statement = (
             statement.order_by(Article.fetched_at.desc()).offset(offset).limit(limit)
+        )
+        return list((await self.session.scalars(statement)).all())
+
+    async def list_processing_failed(
+        self, *, limit: int, max_attempts: int
+    ) -> list[Article]:
+        statement = (
+            select(Article)
+            .where(
+                Article.status == ArticleStatus.PROCESSING_FAILED,
+                Article.processing_attempts < max_attempts,
+            )
+            .options(selectinload(Article.source))
+            .order_by(Article.fetched_at.asc())
+            .limit(limit)
         )
         return list((await self.session.scalars(statement)).all())
