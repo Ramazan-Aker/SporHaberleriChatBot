@@ -40,6 +40,35 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     scheduler_enabled: bool = False
     telegram_enabled: bool = False
+    enable_amazon: bool = True
+    enable_trendyol: bool = False
+    enable_hepsiburada: bool = False
+    use_mock_store_data: bool = True
+    enable_ai_post_polish: bool = False
+    price_check_interval_minutes: int = Field(default=15, ge=1)
+    price_snapshot_interval_hours: int = Field(default=24, ge=1)
+    min_opportunity_score: float = Field(default=75, ge=0, le=100)
+    opportunity_cooldown_hours: int = Field(default=24, ge=1)
+    score_price_drop_weight: float = Field(default=30, ge=0)
+    score_historical_low_weight: float = Field(default=25, ge=0)
+    score_popularity_weight: float = Field(default=15, ge=0)
+    score_seller_weight: float = Field(default=15, ge=0)
+    score_stock_weight: float = Field(default=10, ge=0)
+    score_savings_weight: float = Field(default=5, ge=0)
+    affiliate_disclosure: str = "#reklam"
+    active_product_categories: str = (
+        "SSD,RAM,GPU,CPU,Laptop,Monitor,Headphones,Smartphone,Smartwatch,"
+        "Gamepad,Console,Gaming Accessories"
+    )
+    amazon_access_key: str | None = None
+    amazon_secret_key: str | None = None
+    amazon_credential_id: str | None = None
+    amazon_credential_secret: str | None = None
+    amazon_partner_tag: str | None = None
+    amazon_marketplace: str = "www.amazon.com.tr"
+    amazon_asins: str = ""
+    amazon_search_keywords: str = ""
+    amazon_requests_per_second: float = Field(default=1, gt=0, le=10)
 
     @field_validator("telegram_chat_id", "telegram_allowed_user_id", mode="before")
     @classmethod
@@ -48,7 +77,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_integrations(self) -> "Settings":
-        if self.scheduler_enabled:
+        if self.scheduler_enabled and self.enable_ai_post_polish:
             if self.ai_provider == "openai" and not (
                 self.openai_api_key and self.openai_model
             ):
@@ -74,7 +103,50 @@ class Settings(BaseSettings):
                 "TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID and "
                 "TELEGRAM_ALLOWED_USER_ID are required when Telegram is enabled"
             )
+        if (
+            self.scheduler_enabled
+            and self.enable_amazon
+            and not self.use_mock_store_data
+        ):
+            if not all(
+                (
+                    self.amazon_credential_id,
+                    self.amazon_credential_secret,
+                    self.amazon_partner_tag,
+                )
+            ):
+                raise ValueError(
+                    "AMAZON_CREDENTIAL_ID, AMAZON_CREDENTIAL_SECRET and "
+                    "AMAZON_PARTNER_TAG are required for production Amazon mode"
+                )
+            if not (self.amazon_asins.strip() or self.amazon_search_keywords.strip()):
+                raise ValueError(
+                    "AMAZON_ASINS or AMAZON_SEARCH_KEYWORDS is required for "
+                    "production Amazon mode"
+                )
         return self
+
+    @property
+    def product_categories(self) -> list[str]:
+        return [
+            value.strip()
+            for value in self.active_product_categories.split(",")
+            if value.strip()
+        ]
+
+    @property
+    def amazon_item_ids(self) -> list[str]:
+        return [
+            value.strip() for value in self.amazon_asins.split(",") if value.strip()
+        ]
+
+    @property
+    def amazon_keywords(self) -> list[str]:
+        return [
+            value.strip()
+            for value in self.amazon_search_keywords.split(",")
+            if value.strip()
+        ]
 
 
 @lru_cache

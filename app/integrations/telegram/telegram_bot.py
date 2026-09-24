@@ -5,8 +5,10 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ApplicationBuilder
 
 from app.models.generated_post import GeneratedPost
+from app.models.opportunity_post import OpportunityPost
 from app.models.source import CommercialUseStatus, RSSUsageStatus
 from app.schemas.facts import EventType, ExtractedFacts
+from app.services.opportunity_post_generator import format_try
 
 X_POST_MAX_LENGTH = 280
 X_URL_LENGTH = 23
@@ -82,6 +84,100 @@ def x_share_url(post: GeneratedPost) -> str:
 def x_share_keyboard(post: GeneratedPost) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("𝕏'te Paylaş", url=x_share_url(post))]]
+    )
+
+
+def opportunity_keyboard(
+    post_id: int, *, product_url: str, edited: bool = False
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton("✅ Onayla", callback_data=f"deal_approve:{post_id}"),
+            InlineKeyboardButton("❌ Reddet", callback_data=f"deal_reject:{post_id}"),
+        ]
+    ]
+    if not edited:
+        rows.append(
+            [
+                InlineKeyboardButton("✏️ Düzenle", callback_data=f"deal_edit:{post_id}"),
+                InlineKeyboardButton(
+                    "🔄 Yeniden Oluştur",
+                    callback_data=f"deal_regenerate:{post_id}",
+                ),
+            ]
+        )
+    rows.extend(
+        [
+            [
+                InlineKeyboardButton(
+                    "📋 Metni Göster", callback_data=f"deal_show:{post_id}"
+                ),
+                InlineKeyboardButton("🔗 Ürünü Aç", url=product_url),
+            ],
+            [
+                InlineKeyboardButton(
+                    "📊 Fiyat Geçmişi", callback_data=f"deal_history:{post_id}"
+                )
+            ],
+        ]
+    )
+    return InlineKeyboardMarkup(rows)
+
+
+def opportunity_x_share_url(post: OpportunityPost) -> str:
+    opportunity = post.opportunity
+    text = post.final_text or post.text
+    link = opportunity.listing.affiliate_url or opportunity.listing.product_url
+    available = X_POST_MAX_LENGTH - X_URL_LENGTH - 1
+    body = text.replace(f"\n\n🔗 {link}", "").rstrip()
+    if opportunity.listing.affiliate_url and "\n\n" in body:
+        prefix, disclosure = body.rsplit("\n\n", maxsplit=1)
+        prefix = _truncate_text(prefix, available - len(disclosure) - 2)
+        body = f"{prefix}\n\n{disclosure}"
+    else:
+        body = _truncate_text(body, available)
+    query = urlencode({"text": body, "url": link})
+    return f"https://twitter.com/intent/tweet?{query}"
+
+
+def opportunity_x_share_keyboard(post: OpportunityPost) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("𝕏'te Paylaş", url=opportunity_x_share_url(post))]]
+    )
+
+
+def opportunity_notification_text(post: OpportunityPost) -> str:
+    opportunity = post.opportunity
+    product = opportunity.product
+    listing = opportunity.listing
+    store = opportunity.store
+    warning = (
+        "\n⚠️ <b>Bu fırsat artık geçerli olmayabilir.</b>\n"
+        if opportunity.status.value == "expired"
+        else ""
+    )
+    discount = (
+        f"%{opportunity.discount_from_30d:.1f} daha ucuz"
+        if opportunity.discount_from_30d is not None
+        else "Yeterli veri yok"
+    )
+    return (
+        "🔥 <b>YENİ FIRSAT</b>\n\n"
+        f"<b>📦 Ürün:</b>\n{escape(product.canonical_name)}\n\n"
+        f"<b>🏪 Mağaza:</b>\n{escape(store.name)}\n\n"
+        f"<b>💰 Güncel fiyat:</b>\n{format_try(opportunity.current_price)}\n\n"
+        f"<b>↩️ Önceki fiyat:</b>\n{format_try(opportunity.previous_price)}\n\n"
+        f"<b>📊 30 günlük ortalama:</b>\n{format_try(opportunity.average_30d)}\n\n"
+        f"<b>📉 30 günlük ortalamaya göre:</b>\n{discount}\n\n"
+        f"<b>🏆 90 günlük en düşük:</b>\n{format_try(opportunity.low_90d)}\n\n"
+        f"<b>⭐ Fırsat skoru:</b>\n{opportunity.opportunity_score:.0f}/100\n\n"
+        f"<b>📦 Stok:</b>\n{escape(listing.stock_status)}\n\n"
+        f"<b>👤 Satıcı:</b>\n{escape(listing.seller_name or 'Bilinmiyor')}\n"
+        f"{warning}\n"
+        "<b>HAZIRLANAN GÖNDERİ:</b>\n\n"
+        f"{escape(post.final_text or post.text)}\n\n"
+        f'<b>🔗 Ürün:</b>\n<a href="{escape(listing.product_url, quote=True)}">'
+        "Ürünü aç</a>"
     )
 
 

@@ -7,20 +7,30 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
+from app.integrations.stores.base import StoreAdapter
 from app.integrations.telegram.telegram_bot import (
     approval_keyboard,
     blocked_source_text,
     build_application,
     notification_text,
+    opportunity_keyboard,
+    opportunity_notification_text,
+    opportunity_x_share_keyboard,
     x_share_keyboard,
     x_share_text,
 )
 from app.models.article import ArticleStatus
 from app.models.generated_post import GeneratedPost, PostStatus
+from app.models.opportunity import OpportunityStatus
+from app.models.opportunity_post import OpportunityPost, OpportunityPostStatus
+from app.models.price_history import PriceHistory
 from app.repositories.article_repository import ArticleRepository
+from app.repositories.commerce_repository import CommerceRepository
 from app.repositories.post_repository import PostRepository
 from app.schemas.generated_post import GeneratedPostValidation
 from app.services.content_workflow import ContentWorkflow
+from app.services.opportunity_detector import OpportunityDetector
+from app.services.opportunity_post_generator import OpportunityPostGenerator, format_try
 
 logger = structlog.get_logger(__name__)
 
@@ -36,6 +46,8 @@ class TelegramService:
         max_post_length: int,
         max_source_similarity: float = 0.55,
         content_workflow: ContentWorkflow | None = None,
+        affiliate_disclosure: str = "#reklam",
+        store_adapters: list[StoreAdapter] | None = None,
     ) -> None:
         self.chat_id = chat_id
         self.allowed_user_id = allowed_user_id
@@ -43,16 +55,27 @@ class TelegramService:
         self.max_post_length = max_post_length
         self.max_source_similarity = max_source_similarity
         self.content_workflow = content_workflow
+        self.affiliate_disclosure = affiliate_disclosure
+        self.store_adapters = {
+            adapter.slug: adapter for adapter in (store_adapters or [])
+        }
         self.application = build_application(token)
         self.application.add_handler(
             CallbackQueryHandler(
                 self._on_callback,
-                pattern=r"^(approve|reject|edit|show|regenerate):\d+$",
+                pattern=(
+                    r"^(approve|reject|edit|show|regenerate|deal_approve|"
+                    r"deal_reject|deal_edit|deal_show|deal_regenerate|"
+                    r"deal_history):\d+$"
+                ),
             )
         )
         self.application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_text)
         )
+
+    def set_store_adapters(self, adapters: list[StoreAdapter]) -> None:
+        self.store_adapters = {adapter.slug: adapter for adapter in adapters}
 
     async def start(self) -> None:
         await self.application.initialize()
@@ -139,6 +162,57 @@ class TelegramService:
         for post_id in post_ids:
             await self.notify_post(post_id)
 
+    async def notify_opportunity_post(self, post_id: int) -> None:
+        async with self.session_factory() as session:
+            post = await CommerceRepository(session).get_post(post_id, full=True)
+            if post is None or post.status != OpportunityPostStatus.READY:
+                return
+            opportunity = post.opportunity
+            if opportunity.status not in {
+                OpportunityStatus.READY,
+                OpportunityStatus.REVIEW_REQUIRED,
+            }:
+                return
+            try:
+                message = await self.application.bot.send_message(
+                    chat_id=self.chat_id,
+                    text=opportunity_notification_text(post),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=opportunity_keyboard(
+                        post.id, product_url=opportunity.listing.product_url
+                    ),
+                    disable_web_page_preview=True,
+                )
+                post.telegram_message_id = message.message_id
+                post.telegram_sent_at = datetime.now(UTC)
+                post.telegram_error = None
+                post.next_notification_at = None
+                if opportunity.status == OpportunityStatus.READY:
+                    opportunity.status = OpportunityStatus.TELEGRAM_SENT
+            except Exception as error:
+                post.notification_attempts += 1
+                delay = min(60 * (2 ** (post.notification_attempts - 1)), 3600)
+                post.next_notification_at = datetime.now(UTC) + timedelta(seconds=delay)
+                post.telegram_error = f"{type(error).__name__}: {error}"[:2000]
+                logger.exception(
+                    "opportunity_notification_failed",
+                    post_id=post.id,
+                    opportunity_id=opportunity.id,
+                    listing_id=opportunity.product_listing_id,
+                    store=opportunity.store.slug,
+                    operation="telegram_send",
+                    error=post.telegram_error,
+                )
+            await session.commit()
+
+    async def retry_pending_opportunities(self) -> None:
+        async with self.session_factory() as session:
+            post_ids = [
+                post.id for post in await CommerceRepository(session).pending_posts()
+            ]
+        for post_id in post_ids:
+            await self.notify_opportunity_post(post_id)
+
     async def _on_callback(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -151,6 +225,11 @@ class TelegramService:
         await query.answer()
         action, raw_post_id = (query.data or "").split(":", maxsplit=1)
         post_id = int(raw_post_id)
+        if action.startswith("deal_"):
+            await self._on_opportunity_callback(
+                update, context, action.removeprefix("deal_"), post_id
+            )
+            return
         if action == "show":
             await self._show_post(update, post_id)
         elif action == "edit":
@@ -163,6 +242,198 @@ class TelegramService:
             await self._reject(update, post_id)
         elif action == "regenerate":
             await self._regenerate(update, post_id)
+
+    async def _on_opportunity_callback(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        action: str,
+        post_id: int,
+    ) -> None:
+        query = update.callback_query
+        if action == "show":
+            await self._show_opportunity_post(update, post_id)
+        elif action == "edit":
+            context.user_data["editing_opportunity_post_id"] = post_id
+            if query and query.message:
+                await query.message.reply_text(
+                    "Yeni fırsat gönderisi metnini gönderin."
+                )
+        elif action == "approve":
+            await self._approve_opportunity(update, post_id)
+        elif action == "reject":
+            await self._reject_opportunity(update, post_id)
+        elif action == "regenerate":
+            await self._regenerate_opportunity(update, post_id)
+        elif action == "history":
+            await self._show_price_history(update, post_id)
+
+    async def _show_opportunity_post(self, update: Update, post_id: int) -> None:
+        query = update.callback_query
+        async with self.session_factory() as session:
+            post = await CommerceRepository(session).get_post(post_id, full=True)
+            if query and query.message:
+                if post is None:
+                    await query.message.reply_text("Fırsat gönderisi bulunamadı.")
+                else:
+                    await query.message.reply_text(
+                        post.final_text or post.text,
+                        reply_markup=opportunity_x_share_keyboard(post),
+                        disable_web_page_preview=True,
+                    )
+
+    async def _approve_opportunity(self, update: Update, post_id: int) -> None:
+        query = update.callback_query
+        async with self.session_factory() as session:
+            repository = CommerceRepository(session)
+            post = await repository.get_post(post_id, full=True)
+            if post is not None:
+                adapter = self.store_adapters.get(post.opportunity.store.slug)
+                if adapter is not None:
+                    try:
+                        live_price = await adapter.get_current_price(
+                            post.opportunity.listing.external_product_id
+                        )
+                        if live_price is not None:
+                            post.opportunity.listing.current_price = live_price
+                    except Exception as error:
+                        logger.warning(
+                            "opportunity_live_price_check_failed",
+                            store=post.opportunity.store.slug,
+                            opportunity_id=post.opportunity.id,
+                            listing_id=post.opportunity.product_listing_id,
+                            operation="approval_price_check",
+                            error=f"{type(error).__name__}: {error}",
+                        )
+            reply_markup = None
+            if post is None:
+                message = "Fırsat gönderisi bulunamadı."
+            elif post.status == OpportunityPostStatus.APPROVED:
+                message = "Bu fırsat zaten onaylandı."
+                reply_markup = opportunity_x_share_keyboard(post)
+            elif post.status == OpportunityPostStatus.REJECTED:
+                message = "Bu fırsat daha önce reddedildi."
+            elif post.opportunity.status == OpportunityStatus.EXPIRED:
+                message = "⚠️ Bu fırsat artık geçerli değil; onaylanmadı."
+            elif (
+                post.opportunity.listing.current_price != post.opportunity.current_price
+            ):
+                old_price = post.opportunity.current_price
+                new_price = post.opportunity.listing.current_price
+                post.opportunity.status = OpportunityStatus.EXPIRED
+                await session.commit()
+                message = (
+                    "⚠️ Fiyat değişti.\n\n"
+                    f"Eski fiyat: {format_try(old_price)}\n"
+                    f"Yeni fiyat: {format_try(new_price)}\n\n"
+                    "Fırsat expired yapıldı ve onaylanmadı."
+                )
+            elif post.opportunity.status == OpportunityStatus.REVIEW_REQUIRED:
+                message = (
+                    "Bu ürün eşleşmesi manuel inceleme gerektiriyor. "
+                    "Önce metni düzenleyin veya ürünü doğrulayın."
+                )
+            else:
+                now = datetime.now(UTC)
+                siblings = await session.scalars(
+                    select(OpportunityPost).where(
+                        OpportunityPost.opportunity_id == post.opportunity_id,
+                        OpportunityPost.id != post.id,
+                        OpportunityPost.status == OpportunityPostStatus.READY,
+                    )
+                )
+                for sibling in siblings:
+                    sibling.status = OpportunityPostStatus.REJECTED
+                    sibling.rejected_at = now
+                post.status = OpportunityPostStatus.APPROVED
+                post.approved_at = now
+                post.opportunity.status = OpportunityStatus.APPROVED
+                post.opportunity.approved_at = now
+                await session.commit()
+                message = "✅ Fırsat onaylandı. X paylaşım ekranını açabilirsiniz."
+                reply_markup = opportunity_x_share_keyboard(post)
+            if query and query.message:
+                await query.message.reply_text(message, reply_markup=reply_markup)
+
+    async def _reject_opportunity(self, update: Update, post_id: int) -> None:
+        query = update.callback_query
+        async with self.session_factory() as session:
+            post = await CommerceRepository(session).get_post(post_id, full=True)
+            if post is None:
+                message = "Fırsat gönderisi bulunamadı."
+            elif post.status == OpportunityPostStatus.REJECTED:
+                message = "Bu fırsat zaten reddedildi."
+            elif post.status == OpportunityPostStatus.APPROVED:
+                message = "Bu fırsat daha önce onaylandı."
+            else:
+                now = datetime.now(UTC)
+                post.status = OpportunityPostStatus.REJECTED
+                post.rejected_at = now
+                post.opportunity.status = OpportunityStatus.REJECTED
+                post.opportunity.rejected_at = now
+                await session.commit()
+                message = "❌ Fırsat reddedildi."
+            if query and query.message:
+                await query.message.reply_text(message)
+
+    async def _regenerate_opportunity(self, update: Update, post_id: int) -> None:
+        query = update.callback_query
+        if query is None or query.message is None:
+            return
+        async with self.session_factory() as session:
+            repository = CommerceRepository(session)
+            post = await repository.get_post(post_id, full=True)
+            if post is None:
+                await query.message.reply_text("Fırsat gönderisi bulunamadı.")
+                return
+            generated = OpportunityPostGenerator(self.affiliate_disclosure).generate(
+                post.opportunity
+            )
+            new_post = await repository.create_post(
+                post.opportunity_id, generated.text, generated.template_name
+            )
+            await session.commit()
+            new_post_id = new_post.id
+        await self.notify_opportunity_post(new_post_id)
+        await query.message.reply_text(
+            "Yeni sürüm kayıtlı fırsat verisinden oluşturuldu."
+        )
+
+    async def _show_price_history(self, update: Update, post_id: int) -> None:
+        query = update.callback_query
+        async with self.session_factory() as session:
+            repository = CommerceRepository(session)
+            post = await repository.get_post(post_id, full=True)
+            if post is None:
+                message = "Fırsat gönderisi bulunamadı."
+            else:
+                rows = list(
+                    (
+                        await session.scalars(
+                            select(PriceHistory).where(
+                                PriceHistory.product_listing_id
+                                == post.opportunity.product_listing_id
+                            )
+                        )
+                    ).all()
+                )
+                metrics = OpportunityDetector().analyze(
+                    current_price=post.opportunity.listing.current_price,
+                    previous_price=None,
+                    original_price=None,
+                    history=rows,
+                )
+                message = (
+                    f"{post.opportunity.product.canonical_name}\n\n"
+                    f"7 gün ortalama: {format_try(metrics.average_7d)}\n"
+                    f"30 gün ortalama: {format_try(metrics.average_30d)}\n"
+                    f"90 gün ortalama: {format_try(metrics.average_90d)}\n\n"
+                    f"30 gün en düşük: {format_try(metrics.low_30d)}\n"
+                    f"90 gün en düşük: {format_try(metrics.low_90d)}\n\n"
+                    f"Mevcut: {format_try(metrics.current_price)}"
+                )
+            if query and query.message:
+                await query.message.reply_text(message)
 
     async def _regenerate(self, update: Update, post_id: int) -> None:
         query = update.callback_query
@@ -285,6 +556,10 @@ class TelegramService:
     ) -> None:
         if not self._authorized(update) or update.message is None:
             return
+        opportunity_post_id = context.user_data.get("editing_opportunity_post_id")
+        if opportunity_post_id is not None:
+            await self._edit_opportunity_post(update, context, int(opportunity_post_id))
+            return
         post_id = context.user_data.get("editing_post_id")
         if post_id is None:
             return
@@ -319,5 +594,38 @@ class TelegramService:
                 int(post_id),
                 source_url=post.article.url,
                 edited=True,
+            ),
+        )
+
+    async def _edit_opportunity_post(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        post_id: int,
+    ) -> None:
+        assert update.message is not None
+        text = (update.message.text or "").strip()
+        if not text or len(text) > 1000:
+            await update.message.reply_text(
+                "Metin boş olamaz ve 1.000 karakteri geçemez. Tekrar gönderin."
+            )
+            return
+        async with self.session_factory() as session:
+            post = await CommerceRepository(session).get_post(post_id, full=True)
+            if post is None or post.status != OpportunityPostStatus.READY:
+                context.user_data.pop("editing_opportunity_post_id", None)
+                await update.message.reply_text("Düzenlenebilir fırsat bulunamadı.")
+                return
+            post.final_text = text
+            post.edited_by_user = True
+            if post.opportunity.status == OpportunityStatus.REVIEW_REQUIRED:
+                post.opportunity.status = OpportunityStatus.READY
+            product_url = post.opportunity.listing.product_url
+            await session.commit()
+        context.user_data.pop("editing_opportunity_post_id", None)
+        await update.message.reply_text(
+            "Metin kaydedildi:\n\n" + text,
+            reply_markup=opportunity_keyboard(
+                post_id, product_url=product_url, edited=True
             ),
         )

@@ -4,12 +4,13 @@ from pydantic import ValidationError
 from app.core.config import Settings
 
 
-def test_groq_provider_requires_key_when_scheduler_is_enabled() -> None:
+def test_groq_provider_requires_key_when_ai_polish_is_enabled() -> None:
     with pytest.raises(ValidationError, match="GROQ_API_KEY"):
         Settings(
             _env_file=None,
             ai_provider="groq",
             scheduler_enabled=True,
+            enable_ai_post_polish=True,
             groq_api_key=None,
         )
 
@@ -19,6 +20,7 @@ def test_groq_provider_accepts_key_and_default_model() -> None:
         _env_file=None,
         ai_provider="groq",
         scheduler_enabled=True,
+        enable_ai_post_polish=True,
         groq_api_key="gsk_test-key-for-validation",
     )
 
@@ -31,3 +33,12 @@ def test_groq_provider_accepts_key_and_default_model() -> None:
     assert settings.allow_direct_quotes is False
     assert settings.enable_claim_validation is True
     assert settings.enable_source_policy_check is True
+
+
+def test_production_amazon_requires_creators_api_credentials() -> None:
+    with pytest.raises(ValidationError, match="AMAZON_CREDENTIAL_ID"):
+        Settings(
+            _env_file=None,
+            scheduler_enabled=True,
+            use_mock_store_data=False,
+        )

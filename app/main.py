@@ -6,19 +6,23 @@ import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
-from app.api.routes import articles, health, posts, sources
+from app.api.routes import articles, commerce, health, posts, sources
 from app.core.config import get_settings
 from app.core.database import SessionLocal
 from app.core.logging import configure_logging
 from app.integrations.ai.factory import create_ai_client
-from app.integrations.rss.rss_client import RSSClient
-from app.jobs.news_job import NewsJob
-from app.services.content_generator import ContentGenerator
-from app.services.content_safety_service import ContentSafetyService
-from app.services.content_validator import ContentValidator
-from app.services.content_workflow import ContentWorkflow
-from app.services.fact_extractor import FactExtractor
-from app.services.news_collector import NewsCollector
+from app.integrations.stores import (
+    AmazonAdapter,
+    HepsiburadaAdapter,
+    MockAmazonAdapter,
+    StoreAdapter,
+    TrendyolAdapter,
+)
+from app.jobs.deal_job import DealJob
+from app.services.deal_pipeline import DealPipeline
+from app.services.opportunity_ai_polisher import OpportunityAIPolisher
+from app.services.opportunity_post_generator import OpportunityPostGenerator
+from app.services.opportunity_scorer import OpportunityScorer, ScoreWeights
 from app.services.telegram_service import TelegramService
 
 settings = get_settings()
@@ -26,45 +30,44 @@ configure_logging(settings.log_level)
 logger = structlog.get_logger(__name__)
 
 
+def build_store_adapters() -> list[StoreAdapter]:
+    adapters: list[StoreAdapter] = []
+    if settings.enable_amazon:
+        if settings.use_mock_store_data:
+            adapters.append(MockAmazonAdapter(settings.amazon_partner_tag))
+        else:
+            if settings.amazon_access_key or settings.amazon_secret_key:
+                logger.warning(
+                    "amazon_legacy_credentials_ignored",
+                    store="amazon-tr",
+                    operation="adapter_config",
+                    error="PA-API credentials are deprecated; configure Creators API OAuth credentials",
+                )
+            adapters.append(
+                AmazonAdapter(
+                    credential_id=settings.amazon_credential_id or "",
+                    credential_secret=settings.amazon_credential_secret or "",
+                    partner_tag=settings.amazon_partner_tag or "",
+                    marketplace=settings.amazon_marketplace,
+                    item_ids=settings.amazon_item_ids,
+                    search_keywords=settings.amazon_keywords,
+                    timeout_seconds=settings.http_timeout_seconds,
+                    max_retries=settings.external_api_max_retries,
+                    requests_per_second=settings.amazon_requests_per_second,
+                )
+            )
+    if settings.enable_trendyol:
+        adapters.append(TrendyolAdapter())
+    if settings.enable_hepsiburada:
+        adapters.append(HepsiburadaAdapter())
+    return adapters
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     telegram: TelegramService | None = None
-    rss_client: RSSClient | None = None
     scheduler: AsyncIOScheduler | None = None
-    content_workflow: ContentWorkflow | None = None
-    content_generator: ContentGenerator | None = None
-
-    if settings.scheduler_enabled:
-        ai_client = create_ai_client(settings)
-        content_generator = ContentGenerator(
-            ai_client,
-            max_length=settings.max_post_length,
-            max_attempts=settings.external_api_max_retries,
-            min_request_interval_seconds=settings.ai_min_request_interval_seconds,
-            allow_direct_quotes=settings.allow_direct_quotes,
-        )
-        content_workflow = ContentWorkflow(
-            session_factory=SessionLocal,
-            fact_extractor=FactExtractor(
-                ai_client,
-                max_attempts=settings.external_api_max_retries,
-                allow_direct_quotes=settings.allow_direct_quotes,
-                before_request=content_generator.wait_for_request_slot,
-            ),
-            content_generator=content_generator,
-            safety_service=ContentSafetyService(settings.max_source_similarity),
-            content_validator=(
-                ContentValidator(
-                    ai_client,
-                    max_attempts=settings.external_api_max_retries,
-                    before_request=content_generator.wait_for_request_slot,
-                )
-                if settings.enable_claim_validation
-                else None
-            ),
-            enable_claim_validation=settings.enable_claim_validation,
-            enable_source_policy_check=settings.enable_source_policy_check,
-        )
+    deal_pipeline: DealPipeline | None = None
 
     if settings.telegram_enabled:
         telegram = TelegramService(
@@ -74,64 +77,84 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             session_factory=SessionLocal,
             max_post_length=settings.max_post_length,
             max_source_similarity=settings.max_source_similarity,
-            content_workflow=content_workflow,
+            content_workflow=None,
+            affiliate_disclosure=settings.affiliate_disclosure,
         )
         await telegram.start()
 
     if settings.scheduler_enabled:
-        rss_client = RSSClient(timeout_seconds=settings.http_timeout_seconds)
-        if content_generator is None or content_workflow is None:
-            raise RuntimeError("Content workflow was not initialized")
-        collector = NewsCollector(
-            session_factory=SessionLocal,
-            rss_client=rss_client,
-            content_generator=content_generator,
-            content_workflow=content_workflow,
-            notifier=telegram,
-            initial_lookback_hours=settings.news_initial_lookback_hours,
-            only_current_day=settings.news_only_current_day,
-            news_timezone=settings.news_timezone,
-            enforce_source_usage_policy=(
-                settings.enforce_source_usage_policy
-                and settings.enable_source_policy_check
-            ),
-            failed_retry_limit=settings.ai_failed_retry_limit,
-            max_processing_attempts=settings.external_api_max_retries,
-        )
-        job = NewsJob(collector)
         scheduler = AsyncIOScheduler(timezone="UTC")
-        scheduler.add_job(
-            job.run,
-            "interval",
-            minutes=settings.news_fetch_interval_minutes,
-            id="fetch_news",
-            max_instances=1,
-            coalesce=True,
-            misfire_grace_time=60,
-            next_run_time=datetime.now(UTC),
-        )
+
+    if settings.scheduler_enabled:
+        assert scheduler is not None
+        adapters = build_store_adapters()
+        if telegram:
+            telegram.set_store_adapters(adapters)
+        if adapters:
+            deal_pipeline = DealPipeline(
+                session_factory=SessionLocal,
+                adapters=adapters,
+                scorer=OpportunityScorer(
+                    ScoreWeights(
+                        price_drop=settings.score_price_drop_weight,
+                        historical_low=settings.score_historical_low_weight,
+                        popularity=settings.score_popularity_weight,
+                        seller=settings.score_seller_weight,
+                        stock=settings.score_stock_weight,
+                        savings=settings.score_savings_weight,
+                    )
+                ),
+                post_generator=OpportunityPostGenerator(settings.affiliate_disclosure),
+                notifier=telegram,
+                min_score=settings.min_opportunity_score,
+                cooldown_hours=settings.opportunity_cooldown_hours,
+                snapshot_hours=settings.price_snapshot_interval_hours,
+                active_categories=settings.product_categories,
+                ai_polisher=(
+                    OpportunityAIPolisher(create_ai_client(settings))
+                    if settings.enable_ai_post_polish
+                    else None
+                ),
+            )
+            scheduler.add_job(
+                DealJob(deal_pipeline).run,
+                "interval",
+                minutes=settings.price_check_interval_minutes,
+                id="fetch_prices",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=60,
+                next_run_time=datetime.now(UTC),
+            )
         scheduler.start()
-        logger.info("scheduler_started", operation="scheduler_start")
+        logger.info(
+            "scheduler_started",
+            operation="scheduler_start",
+            store_count=len(adapters),
+        )
 
     app.state.telegram = telegram
     app.state.scheduler = scheduler
+    app.state.deal_pipeline = deal_pipeline
     try:
         yield
     finally:
         if scheduler:
             scheduler.shutdown(wait=False)
-        if rss_client:
-            await rss_client.close()
+        if deal_pipeline:
+            await deal_pipeline.close()
         if telegram:
             await telegram.stop()
 
 
 app = FastAPI(
-    title="Spor Haberleri İçerik Sistemi",
-    version="0.1.0",
+    title="Türkiye Fiyat / Fırsat Radarı",
+    version="0.2.0",
     lifespan=lifespan,
 )
 app.include_router(health.router)
+app.include_router(commerce.router)
+# The legacy tables remain queryable, but no sports/RSS collection job is started.
 app.include_router(articles.router)
 app.include_router(sources.router)
 app.include_router(posts.router)
